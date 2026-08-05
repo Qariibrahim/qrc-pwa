@@ -341,7 +341,34 @@ async function handleInstall(request, env) {
   }
 
   const counts = await getPwaCounts(env);
+  /* =====================================================
+     CODE NO. PWA-TRACK-4003 — PART 2
+     SEND EMAIL AFTER NEW INSTALLATION START
+     ===================================================== */
 
+  let emailResult = {
+    success: false,
+    skipped: true,
+    reason: "This device was already registered."
+  };
+
+  if (isNewInstallation) {
+    emailResult = await sendInstallEmail(
+      env,
+      {
+        device_id: deviceId,
+        app_version: appVersion,
+        platform: platform,
+        browser: browser
+      },
+      counts
+    );
+  }
+
+  /* =====================================================
+     CODE NO. PWA-TRACK-4003 — PART 2
+     SEND EMAIL AFTER NEW INSTALLATION END
+     ===================================================== */
   return jsonResponse({
     success: true,
 
@@ -371,7 +398,9 @@ async function handleInstall(request, env) {
     inactive_days:
       counts.inactive_days,
 
-    recorded_at: now
+    recorded_at: now,
+
+email_notification: emailResult
   });
 }
 
