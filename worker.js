@@ -52,7 +52,10 @@ export default {
           time: new Date().toISOString()
         });
       }
-
+/* EmailJS direct testing endpoint */
+if (path === "/api/pwa/email-test") {
+  return handleEmailTest(request, env);
+}
       /* =============================================
          PWA MANIFEST
          ============================================= */
@@ -207,6 +210,42 @@ export default {
     }
   }
 };
+
+/* =========================================================
+   EMAILJS DIRECT TEST
+   GET /api/pwa/email-test
+   ========================================================= */
+
+async function handleEmailTest(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const counts = await getPwaCounts(env);
+
+  const emailResult = await sendInstallEmail(
+    env,
+    {
+      device_id: "manual_email_test_001",
+      app_version: DEFAULT_APP_VERSION,
+      platform: "Manual Browser Test",
+      browser: "Google Chrome",
+      event_type: "EmailJS Manual Test"
+    },
+    counts
+  );
+
+  return jsonResponse({
+    success: Boolean(emailResult.success),
+    test: "EmailJS Manual Test",
+    email_notification: emailResult,
+    checked_at: new Date().toISOString()
+  });
+}
 
 /* =========================================================
    API: NEW INSTALLATION
