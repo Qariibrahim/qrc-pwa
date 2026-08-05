@@ -1319,7 +1319,207 @@ function safePositiveInteger(
 
   return Math.floor(number);
 }
+/* =========================================================
+   CODE NO. PWA-TRACK-4003 — PART 1
+   EMAILJS INSTALL NOTIFICATION FUNCTION START
+   ========================================================= */
 
+async function sendInstallEmail(
+  env,
+  installation,
+  counts
+) {
+  /*
+    چاروں EmailJS Secrets موجود نہ ہوں تو
+    Database Tracking جاری رہے گی، Email نہیں بھیجی جائے گی۔
+  */
+
+  if (
+    !env.EMAILJS_SERVICE_ID ||
+    !env.EMAILJS_TEMPLATE_ID ||
+    !env.EMAILJS_PUBLIC_KEY ||
+    !env.EMAILJS_PRIVATE_KEY
+  ) {
+    return {
+      success: false,
+      skipped: true,
+      reason: "EmailJS secrets are missing."
+    };
+  }
+
+  const dateTime =
+    new Date().toLocaleString(
+      "en-IN",
+      {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }
+    );
+
+  const emailPayload = {
+    service_id:
+      env.EMAILJS_SERVICE_ID,
+
+    template_id:
+      env.EMAILJS_TEMPLATE_ID,
+
+    user_id:
+      env.EMAILJS_PUBLIC_KEY,
+
+    accessToken:
+      env.EMAILJS_PRIVATE_KEY,
+
+    template_params: {
+      event_type:
+        "New PWA Installation",
+
+      app_name:
+        "Imdade Rohani App",
+
+      total_installations:
+        String(
+          counts.total_installations || 0
+        ),
+
+      active_users:
+        String(
+          counts.active_users || 0
+        ),
+
+      inactive_users:
+        String(
+          counts.inactive_users || 0
+        ),
+
+      device_id:
+        String(
+          installation.device_id ||
+          "unknown"
+        ),
+
+      app_version:
+        String(
+          installation.app_version ||
+          DEFAULT_APP_VERSION
+        ),
+
+      platform:
+        String(
+          installation.platform ||
+          "unknown"
+        ),
+
+      browser:
+        String(
+          installation.browser ||
+          "unknown"
+        ),
+
+      date_time:
+        dateTime,
+
+      message:
+        [
+          "Imdade Rohani App ki nayi installation hui hai.",
+          "",
+          "Kul installations: " +
+            String(
+              counts.total_installations || 0
+            ),
+          "Active users: " +
+            String(
+              counts.active_users || 0
+            ),
+          "Inactive users: " +
+            String(
+              counts.inactive_users || 0
+            ),
+          "Device ID: " +
+            String(
+              installation.device_id ||
+              "unknown"
+            ),
+          "App version: " +
+            String(
+              installation.app_version ||
+              DEFAULT_APP_VERSION
+            ),
+          "Platform: " +
+            String(
+              installation.platform ||
+              "unknown"
+            ),
+          "Browser: " +
+            String(
+              installation.browser ||
+              "unknown"
+            ),
+          "Date/Time: " + dateTime
+        ].join("\n")
+    }
+  };
+
+  try {
+    const response = await fetch(
+      "https://api.emailjs.com/api/v1.0/email/send",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify(emailPayload)
+      }
+    );
+
+    const responseText =
+      await response.text();
+
+    if (!response.ok) {
+      return {
+        success: false,
+        skipped: false,
+        status: response.status,
+        error:
+          responseText ||
+          "EmailJS request failed."
+      };
+    }
+
+    return {
+      success: true,
+      skipped: false,
+      status: response.status,
+      response:
+        responseText || "OK"
+    };
+
+  } catch (error) {
+    return {
+      success: false,
+      skipped: false,
+      error:
+        String(
+          error && error.message
+            ? error.message
+            : error
+        )
+    };
+  }
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4003 — PART 1
+   EMAILJS INSTALL NOTIFICATION FUNCTION END
+   ========================================================= */
 /* =========================================================
    CODE NO. PWA-TRACK-4001 — PART 1 END
    ========================================================= */
