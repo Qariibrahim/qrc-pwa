@@ -346,24 +346,20 @@ async function handleInstall(request, env) {
      SEND EMAIL AFTER NEW INSTALLATION START
      ===================================================== */
 
-  let emailResult = {
-    success: false,
-    skipped: true,
-    reason: "This device was already registered."
-  };
-
-  if (isNewInstallation) {
-    emailResult = await sendInstallEmail(
-      env,
-      {
-        device_id: deviceId,
-        app_version: appVersion,
-        platform: platform,
-        browser: browser
-      },
-      counts
-    );
-  }
+  let emailResult = await sendInstallEmail(
+  env,
+  {
+    device_id: deviceId,
+    app_version: appVersion,
+    platform: platform,
+    browser: browser,
+    event_type:
+      isNewInstallation
+        ? "New PWA Installation"
+        : "PWA Reinstallation"
+  },
+  counts
+);
 
   /* =====================================================
      CODE NO. PWA-TRACK-4003 — PART 2
@@ -1405,7 +1401,8 @@ async function sendInstallEmail(
 
     template_params: {
       event_type:
-        "New PWA Installation",
+  installation.event_type ||
+  "New PWA Installation",
 
       app_name:
         "Imdade Rohani App",
