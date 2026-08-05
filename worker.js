@@ -1,156 +1,1325 @@
+/* =========================================================
+   CODE NO. PWA-TRACK-4001 — PART 1
+   IMDADE ROHANI PWA + D1 INSTALL TRACKING WORKER
+   ========================================================= */
+
 const SITE_ORIGIN = "https://qrc.imdaderohani.in";
-const LOGO_URL = "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhswMSCDL7cBASmV4gtFdF0w9bsk4vP5VtIRxJZYdqwzKCbCP35-cy9oYYCBTjhdhVQjQwS7P-Vdf5Z8PZLIaj-LtPsx6TvGOxdOTmMM-Y_oHvpEWd4JuVdCw9wyn2w-6p0Vdt4QLQXF80Qz-pWfpdX6DaIjlIXgiODrDffCsPdS6-AOIRCmkR0oZXGAuD9/s500/38030.png";
+
+const LOGO_URL =
+  "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhswMSCDL7cBASmV4gtFdF0w9bsk4vP5VtIRxJZYdqwzKCbCP35-cy9oYYCBTjhdhVQjQwS7P-Vdf5Z8PZLIaj-LtPsx6TvGOxdOTmMM-Y_oHvpEWd4JuVdCw9wyn2w-6p0Vdt4QLQXF80Qz-pWfpdX6DaIjlIXgiODrDffCsPdS6-AOIRCmkR0oZXGAuD9/s500/38030.png";
+
+const DEFAULT_APP_VERSION = "1";
+
+/* =========================================================
+   MAIN WORKER
+   ========================================================= */
 
 export default {
-  async fetch(request) {
-    const url = new URL(request.url);
-    const path = url.pathname;
+  async fetch(request, env) {
+    try {
+      const url = new URL(request.url);
+      const path = url.pathname;
 
-    if (path === "/manifest.webmanifest" || path === "/manifest.json") {
-      const manifest = {
-        id: "/",
-        name: "Imdade Rohani",
-        short_name: "Imdade Rohani",
-        description: "Imdade Rohani ki roohani janch, maloomat aur online services.",
-        start_url: "/?source=pwa",
-        scope: "/",
-        lang: "ur",
-        dir: "rtl",
-        display: "standalone",
-        orientation: "portrait-primary",
-        background_color: "#f3f8ff",
-        theme_color: "#002087",
-        icons: [
-          {src:"/pwa-icon-192.png",sizes:"192x192",type:"image/png",purpose:"any"},
-          {src:"/pwa-icon-192.png",sizes:"192x192",type:"image/png",purpose:"maskable"},
-          {src:"/pwa-icon-512.png",sizes:"512x512",type:"image/png",purpose:"any"},
-          {src:"/pwa-icon-512.png",sizes:"512x512",type:"image/png",purpose:"maskable"}
-        ]
-      };
-      return new Response(JSON.stringify(manifest, null, 2), {
-        headers: {
-          "Content-Type": "application/manifest+json; charset=UTF-8",
-          "Cache-Control": "public, max-age=3600",
-          "Access-Control-Allow-Origin": "*"
-        }
-      });
+      /* CORS Preflight */
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders()
+        });
+      }
+
+      /* =============================================
+         PWA TRACKING API
+         ============================================= */
+
+      if (path === "/api/pwa/install") {
+        return handleInstall(request, env);
+      }
+
+      if (path === "/api/pwa/activity") {
+        return handleActivity(request, env);
+      }
+
+      if (path === "/api/pwa/status") {
+        return handleStatus(request, env);
+      }
+
+      if (path === "/api/pwa/health") {
+        return jsonResponse({
+          success: true,
+          service: "Imdade Rohani PWA Tracker",
+          database_binding: env.DB ? "connected" : "missing",
+          time: new Date().toISOString()
+        });
+      }
+
+      /* =============================================
+         PWA MANIFEST
+         ============================================= */
+
+      if (
+        path === "/manifest.webmanifest" ||
+        path === "/manifest.json"
+      ) {
+        const manifest = {
+          id: "/",
+          name: "Imdade Rohani",
+          short_name: "Imdade Rohani",
+
+          description:
+            "Imdade Rohani ki roohani janch, maloomat aur online services.",
+
+          start_url: "/?source=pwa",
+          scope: "/",
+
+          lang: "ur",
+          dir: "rtl",
+
+          display: "standalone",
+          orientation: "portrait-primary",
+
+          background_color: "#f3f8ff",
+          theme_color: "#002087",
+
+          icons: [
+            {
+              src: "/pwa-icon-192.png",
+              sizes: "192x192",
+              type: "image/png",
+              purpose: "any"
+            },
+            {
+              src: "/pwa-icon-192.png",
+              sizes: "192x192",
+              type: "image/png",
+              purpose: "maskable"
+            },
+            {
+              src: "/pwa-icon-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "any"
+            },
+            {
+              src: "/pwa-icon-512.png",
+              sizes: "512x512",
+              type: "image/png",
+              purpose: "maskable"
+            }
+          ]
+        };
+
+        return new Response(
+          JSON.stringify(manifest, null, 2),
+          {
+            headers: {
+              "Content-Type":
+                "application/manifest+json; charset=UTF-8",
+
+              "Cache-Control":
+                "public, max-age=3600",
+
+              "Access-Control-Allow-Origin": "*",
+
+              "X-Content-Type-Options": "nosniff"
+            }
+          }
+        );
+      }
+
+      /* =============================================
+         SERVICE WORKER
+         ============================================= */
+
+      if (path === "/service-worker.js") {
+        return new Response(serviceWorkerCode(), {
+          headers: {
+            "Content-Type":
+              "application/javascript; charset=UTF-8",
+
+            "Service-Worker-Allowed": "/",
+
+            "Cache-Control":
+              "no-cache, no-store, must-revalidate",
+
+            "X-Content-Type-Options": "nosniff"
+          }
+        });
+      }
+
+      /* =============================================
+         OFFLINE PAGE
+         ============================================= */
+
+      if (path === "/offline.html") {
+        return new Response(offlineHtml(), {
+          headers: {
+            "Content-Type":
+              "text/html; charset=UTF-8",
+
+            "Cache-Control":
+              "public, max-age=3600",
+
+            "X-Content-Type-Options": "nosniff"
+          }
+        });
+      }
+
+      /* =============================================
+         PWA ICONS
+         ============================================= */
+
+      if (path === "/pwa-icon-192.png") {
+        return serveIcon(192);
+      }
+
+      if (path === "/pwa-icon-512.png") {
+        return serveIcon(512);
+      }
+
+      /* Unknown API */
+      if (path.startsWith("/api/")) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "API endpoint not found."
+          },
+          404
+        );
+      }
+
+      /* Other Worker URLs return to Blog */
+      return Response.redirect(SITE_ORIGIN, 302);
+
+    } catch (error) {
+      return jsonResponse(
+        {
+          success: false,
+          error: "Worker request failed.",
+          message: String(
+            error && error.message
+              ? error.message
+              : error
+          )
+        },
+        500
+      );
     }
-
-    if (path === "/service-worker.js") {
-      return new Response(serviceWorkerCode(), {
-        headers: {
-          "Content-Type": "application/javascript; charset=UTF-8",
-          "Service-Worker-Allowed": "/",
-          "Cache-Control": "no-cache, no-store, must-revalidate"
-        }
-      });
-    }
-
-    if (path === "/offline.html") {
-      return new Response(offlineHtml(), {
-        headers: {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "public, max-age=3600"
-        }
-      });
-    }
-
-    if (path === "/pwa-icon-192.png") return serveIcon(192);
-    if (path === "/pwa-icon-512.png") return serveIcon(512);
-
-    return Response.redirect(SITE_ORIGIN, 302);
   }
 };
 
-async function serveIcon(size) {
-  const resized = LOGO_URL.replace("/s500/", `/s${size}-c/`);
-  const response = await fetch(resized, {
-    cf: { cacheEverything: true, cacheTtl: 86400 }
+/* =========================================================
+   API: NEW INSTALLATION
+   POST /api/pwa/install
+   ========================================================= */
+
+async function handleInstall(request, env) {
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const body = await readJsonBody(request);
+
+  if (!body) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "Valid JSON data is required."
+      },
+      400
+    );
+  }
+
+  const deviceId = cleanDeviceId(body.device_id);
+
+  if (!deviceId) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "A valid device_id is required."
+      },
+      400
+    );
+  }
+
+  const appVersion =
+    cleanShortText(body.app_version, 50) ||
+    DEFAULT_APP_VERSION;
+
+  const platform =
+    cleanShortText(body.platform, 100) ||
+    "unknown";
+
+  const browser =
+    cleanShortText(body.browser, 100) ||
+    "unknown";
+
+  const now = new Date().toISOString();
+
+  const existingUser = await env.DB
+    .prepare(
+      `
+      SELECT
+        id,
+        device_id,
+        install_count,
+        status
+      FROM pwa_users
+      WHERE device_id = ?
+      LIMIT 1
+      `
+    )
+    .bind(deviceId)
+    .first();
+
+  let isNewInstallation = false;
+
+  if (!existingUser) {
+    await env.DB
+      .prepare(
+        `
+        INSERT INTO pwa_users (
+          device_id,
+          installed_at,
+          last_active,
+          app_version,
+          status,
+          install_count,
+          update_count,
+          platform,
+          browser,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, 'active', 1, 0, ?, ?, ?, ?)
+        `
+      )
+      .bind(
+        deviceId,
+        now,
+        now,
+        appVersion,
+        platform,
+        browser,
+        now,
+        now
+      )
+      .run();
+
+    isNewInstallation = true;
+
+  } else {
+    await env.DB
+      .prepare(
+        `
+        UPDATE pwa_users
+        SET
+          last_active = ?,
+          app_version = ?,
+          status = 'active',
+          install_count =
+            COALESCE(install_count, 1) + 1,
+          platform = ?,
+          browser = ?,
+          updated_at = ?
+        WHERE device_id = ?
+        `
+      )
+      .bind(
+        now,
+        appVersion,
+        platform,
+        browser,
+        now,
+        deviceId
+      )
+      .run();
+  }
+
+  const counts = await getPwaCounts(env);
+
+  return jsonResponse({
+    success: true,
+
+    event:
+      isNewInstallation
+        ? "new_installation"
+        : "existing_device_reinstalled",
+
+    is_new_installation: isNewInstallation,
+
+    device_id: deviceId,
+
+    app_version: appVersion,
+
+    total_installations:
+      counts.total_installations,
+
+    active_users:
+      counts.active_users,
+
+    inactive_users:
+      counts.inactive_users,
+
+    latest_version:
+      counts.latest_version,
+
+    inactive_days:
+      counts.inactive_days,
+
+    recorded_at: now
   });
-  if (!response.ok) return new Response("PWA icon could not be loaded.", {status:500});
-  const headers = new Headers(response.headers);
-  headers.set("Content-Type", "image/png");
-  headers.set("Cache-Control", "public, max-age=86400");
-  headers.set("Access-Control-Allow-Origin", "*");
-  return new Response(response.body, {status:200, headers});
 }
+
+/* =========================================================
+   API: APP ACTIVITY / LAST ACTIVE
+   POST /api/pwa/activity
+   ========================================================= */
+
+async function handleActivity(request, env) {
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const body = await readJsonBody(request);
+
+  if (!body) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "Valid JSON data is required."
+      },
+      400
+    );
+  }
+
+  const deviceId = cleanDeviceId(body.device_id);
+
+  if (!deviceId) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "A valid device_id is required."
+      },
+      400
+    );
+  }
+
+  const appVersion =
+    cleanShortText(body.app_version, 50) ||
+    DEFAULT_APP_VERSION;
+
+  const platform =
+    cleanShortText(body.platform, 100) ||
+    "unknown";
+
+  const browser =
+    cleanShortText(body.browser, 100) ||
+    "unknown";
+
+  const now = new Date().toISOString();
+
+  const existingUser = await env.DB
+    .prepare(
+      `
+      SELECT
+        id,
+        device_id,
+        status,
+        app_version
+      FROM pwa_users
+      WHERE device_id = ?
+      LIMIT 1
+      `
+    )
+    .bind(deviceId)
+    .first();
+
+  let createdFromActivity = false;
+  let wasInactive = false;
+
+  if (!existingUser) {
+    /*
+      اگر کسی Browser میں appinstalled event محفوظ نہ ہوسکا
+      لیکن Installed PWA کھولی گئی تو Activity سے Record بن جائے۔
+    */
+
+    await env.DB
+      .prepare(
+        `
+        INSERT INTO pwa_users (
+          device_id,
+          installed_at,
+          last_active,
+          app_version,
+          status,
+          install_count,
+          update_count,
+          platform,
+          browser,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, 'active', 1, 0, ?, ?, ?, ?)
+        `
+      )
+      .bind(
+        deviceId,
+        now,
+        now,
+        appVersion,
+        platform,
+        browser,
+        now,
+        now
+      )
+      .run();
+
+    createdFromActivity = true;
+
+  } else {
+    wasInactive =
+      String(existingUser.status || "") ===
+      "inactive";
+
+    const versionChanged =
+      String(existingUser.app_version || "") !==
+      appVersion;
+
+    await env.DB
+      .prepare(
+        `
+        UPDATE pwa_users
+        SET
+          last_active = ?,
+          app_version = ?,
+          status = 'active',
+          update_count =
+            CASE
+              WHEN app_version <> ?
+              THEN COALESCE(update_count, 0) + 1
+              ELSE COALESCE(update_count, 0)
+            END,
+          platform = ?,
+          browser = ?,
+          updated_at = ?
+        WHERE device_id = ?
+        `
+      )
+      .bind(
+        now,
+        appVersion,
+        appVersion,
+        platform,
+        browser,
+        now,
+        deviceId
+      )
+      .run();
+
+    /*
+      یہ Variable اگلے Gmail Part میں استعمال ہوگا۔
+    */
+    void versionChanged;
+  }
+
+  const counts = await getPwaCounts(env);
+
+  return jsonResponse({
+    success: true,
+    event: "activity_updated",
+
+    device_id: deviceId,
+
+    created_from_activity:
+      createdFromActivity,
+
+    reactivated:
+      wasInactive,
+
+    app_version:
+      appVersion,
+
+    total_installations:
+      counts.total_installations,
+
+    active_users:
+      counts.active_users,
+
+    inactive_users:
+      counts.inactive_users,
+
+    latest_version:
+      counts.latest_version,
+
+    force_update:
+      counts.force_update,
+
+    inactive_days:
+      counts.inactive_days,
+
+    last_active:
+      now
+  });
+}
+
+/* =========================================================
+   API: TOTAL STATUS
+   GET /api/pwa/status
+   Optional:
+   ?device_id=DEVICE-ID
+   ========================================================= */
+
+async function handleStatus(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const url = new URL(request.url);
+
+  const requestedDeviceId =
+    cleanDeviceId(
+      url.searchParams.get("device_id")
+    );
+
+  const counts = await getPwaCounts(env);
+
+  let device = null;
+
+  if (requestedDeviceId) {
+    device = await env.DB
+      .prepare(
+        `
+        SELECT
+          device_id,
+          installed_at,
+          last_active,
+          app_version,
+          status,
+          install_count,
+          update_count,
+          platform,
+          browser,
+          created_at,
+          updated_at
+        FROM pwa_users
+        WHERE device_id = ?
+        LIMIT 1
+        `
+      )
+      .bind(requestedDeviceId)
+      .first();
+  }
+
+  return jsonResponse({
+    success: true,
+
+    total_installations:
+      counts.total_installations,
+
+    active_users:
+      counts.active_users,
+
+    inactive_users:
+      counts.inactive_users,
+
+    latest_version:
+      counts.latest_version,
+
+    force_update:
+      counts.force_update,
+
+    inactive_days:
+      counts.inactive_days,
+
+    device_found:
+      Boolean(device),
+
+    device,
+
+    checked_at:
+      new Date().toISOString()
+  });
+}
+
+/* =========================================================
+   DATABASE COUNTS
+   ========================================================= */
+
+async function getPwaCounts(env) {
+  const settings = await env.DB
+    .prepare(
+      `
+      SELECT
+        latest_version,
+        force_update,
+        inactive_days,
+        last_report_at
+      FROM pwa_settings
+      WHERE id = 1
+      LIMIT 1
+      `
+    )
+    .first();
+
+  const inactiveDays =
+    safePositiveInteger(
+      settings &&
+      settings.inactive_days,
+      15
+    );
+
+  const cutoffDate = new Date(
+    Date.now() -
+    inactiveDays *
+    24 *
+    60 *
+    60 *
+    1000
+  ).toISOString();
+
+  /*
+    15 دن پرانے Records کو inactive بنائیں۔
+  */
+
+  await env.DB
+    .prepare(
+      `
+      UPDATE pwa_users
+      SET
+        status =
+          CASE
+            WHEN last_active < ?
+            THEN 'inactive'
+            ELSE 'active'
+          END,
+        updated_at =
+          CASE
+            WHEN status <>
+              CASE
+                WHEN last_active < ?
+                THEN 'inactive'
+                ELSE 'active'
+              END
+            THEN ?
+            ELSE updated_at
+          END
+      `
+    )
+    .bind(
+      cutoffDate,
+      cutoffDate,
+      new Date().toISOString()
+    )
+    .run();
+
+  const result = await env.DB
+    .prepare(
+      `
+      SELECT
+        COUNT(*) AS total_installations,
+
+        COALESCE(
+          SUM(
+            CASE
+              WHEN last_active >= ?
+              THEN 1
+              ELSE 0
+            END
+          ),
+          0
+        ) AS active_users,
+
+        COALESCE(
+          SUM(
+            CASE
+              WHEN last_active < ?
+              THEN 1
+              ELSE 0
+            END
+          ),
+          0
+        ) AS inactive_users
+
+      FROM pwa_users
+      `
+    )
+    .bind(
+      cutoffDate,
+      cutoffDate
+    )
+    .first();
+
+  return {
+    total_installations:
+      Number(
+        result &&
+        result.total_installations
+          ? result.total_installations
+          : 0
+      ),
+
+    active_users:
+      Number(
+        result &&
+        result.active_users
+          ? result.active_users
+          : 0
+      ),
+
+    inactive_users:
+      Number(
+        result &&
+        result.inactive_users
+          ? result.inactive_users
+          : 0
+      ),
+
+    latest_version:
+      String(
+        settings &&
+        settings.latest_version
+          ? settings.latest_version
+          : DEFAULT_APP_VERSION
+      ),
+
+    force_update:
+      Number(
+        settings &&
+        settings.force_update
+          ? settings.force_update
+          : 0
+      ) === 1,
+
+    inactive_days:
+      inactiveDays,
+
+    last_report_at:
+      settings
+        ? settings.last_report_at
+        : null
+  };
+}
+
+/* =========================================================
+   PWA ICON
+   ========================================================= */
+
+async function serveIcon(size) {
+  const resized = LOGO_URL.replace(
+    "/s500/",
+    `/s${size}-c/`
+  );
+
+  const response = await fetch(resized, {
+    cf: {
+      cacheEverything: true,
+      cacheTtl: 86400
+    }
+  });
+
+  if (!response.ok) {
+    return new Response(
+      "PWA icon could not be loaded.",
+      {
+        status: 500
+      }
+    );
+  }
+
+  const headers =
+    new Headers(response.headers);
+
+  headers.set(
+    "Content-Type",
+    "image/png"
+  );
+
+  headers.set(
+    "Cache-Control",
+    "public, max-age=86400"
+  );
+
+  headers.set(
+    "Access-Control-Allow-Origin",
+    "*"
+  );
+
+  headers.set(
+    "X-Content-Type-Options",
+    "nosniff"
+  );
+
+  return new Response(response.body, {
+    status: 200,
+    headers
+  });
+}
+
+/* =========================================================
+   SERVICE WORKER CODE
+   ========================================================= */
 
 function serviceWorkerCode() {
   return `
 const VERSION = "imdaderohani-pwa-v1";
-const PAGE_CACHE = VERSION + "-pages";
-const STATIC_CACHE = VERSION + "-static";
-const OFFLINE_URL = "/offline.html";
 
-self.addEventListener("install", event => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE)
-      .then(cache => Promise.allSettled([
-        cache.add(OFFLINE_URL),
-        cache.add("/manifest.webmanifest"),
-        cache.add("/pwa-icon-192.png"),
-        cache.add("/pwa-icon-512.png")
-      ]))
-      .then(() => self.skipWaiting())
-  );
-});
+const PAGE_CACHE =
+  VERSION + "-pages";
 
-self.addEventListener("activate", event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(
-        keys.filter(key => ![PAGE_CACHE, STATIC_CACHE].includes(key))
-            .map(key => caches.delete(key))
-      ))
-      .then(() => self.clients.claim())
-  );
-});
+const STATIC_CACHE =
+  VERSION + "-static";
 
-self.addEventListener("fetch", event => {
-  const request = event.request;
-  if (request.method !== "GET") return;
-  const requestUrl = new URL(request.url);
+const OFFLINE_URL =
+  "/offline.html";
 
-  if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(PAGE_CACHE).then(cache => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(async () => (await caches.match(request)) || (await caches.match(OFFLINE_URL)))
+self.addEventListener(
+  "install",
+  event => {
+    event.waitUntil(
+      caches
+        .open(STATIC_CACHE)
+        .then(cache =>
+          Promise.allSettled([
+            cache.add(OFFLINE_URL),
+            cache.add(
+              "/manifest.webmanifest"
+            ),
+            cache.add(
+              "/pwa-icon-192.png"
+            ),
+            cache.add(
+              "/pwa-icon-512.png"
+            )
+          ])
+        )
+        .then(() =>
+          self.skipWaiting()
+        )
     );
-    return;
   }
+);
 
-  if (requestUrl.origin === self.location.origin) {
-    event.respondWith(
-      caches.match(request).then(cached => {
-        const network = fetch(request)
+self.addEventListener(
+  "activate",
+  event => {
+    event.waitUntil(
+      caches
+        .keys()
+        .then(keys =>
+          Promise.all(
+            keys
+              .filter(
+                key =>
+                  ![
+                    PAGE_CACHE,
+                    STATIC_CACHE
+                  ].includes(key)
+              )
+              .map(
+                key =>
+                  caches.delete(key)
+              )
+          )
+        )
+        .then(() =>
+          self.clients.claim()
+        )
+    );
+  }
+);
+
+self.addEventListener(
+  "fetch",
+  event => {
+    const request =
+      event.request;
+
+    if (
+      request.method !== "GET"
+    ) {
+      return;
+    }
+
+    const requestUrl =
+      new URL(request.url);
+
+    if (
+      request.mode === "navigate"
+    ) {
+      event.respondWith(
+        fetch(request)
           .then(response => {
-            if (response && response.ok) {
-              const copy = response.clone();
-              caches.open(STATIC_CACHE).then(cache => cache.put(request, copy));
+            if (
+              response &&
+              response.ok
+            ) {
+              const copy =
+                response.clone();
+
+              caches
+                .open(PAGE_CACHE)
+                .then(cache =>
+                  cache.put(
+                    request,
+                    copy
+                  )
+                );
             }
+
             return response;
           })
-          .catch(() => cached);
-        return cached || network;
-      })
-    );
-  }
-});
+          .catch(
+            async () =>
+              (
+                await caches.match(
+                  request
+                )
+              ) ||
+              (
+                await caches.match(
+                  OFFLINE_URL
+                )
+              )
+          )
+      );
 
-self.addEventListener("message", event => {
-  if (event.data && event.data.type === "SKIP_WAITING") self.skipWaiting();
-});
+      return;
+    }
+
+    if (
+      requestUrl.origin ===
+      self.location.origin
+    ) {
+      event.respondWith(
+        caches
+          .match(request)
+          .then(cached => {
+            const network =
+              fetch(request)
+                .then(response => {
+                  if (
+                    response &&
+                    response.ok
+                  ) {
+                    const copy =
+                      response.clone();
+
+                    caches
+                      .open(
+                        STATIC_CACHE
+                      )
+                      .then(cache =>
+                        cache.put(
+                          request,
+                          copy
+                        )
+                      );
+                  }
+
+                  return response;
+                })
+                .catch(
+                  () => cached
+                );
+
+            return (
+              cached ||
+              network
+            );
+          })
+      );
+    }
+  }
+);
+
+self.addEventListener(
+  "message",
+  event => {
+    if (
+      event.data &&
+      event.data.type ===
+        "SKIP_WAITING"
+    ) {
+      self.skipWaiting();
+    }
+  }
+);
 `;
 }
 
+/* =========================================================
+   OFFLINE PAGE
+   ========================================================= */
+
 function offlineHtml() {
-  return `<!doctype html><html lang="ur" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#002087"><title>انٹرنیٹ دستیاب نہیں</title><style>*{box-sizing:border-box}body{min-height:100vh;margin:0;padding:20px;display:flex;align-items:center;justify-content:center;background:linear-gradient(145deg,#001449,#002087,#1769c2);color:#fff;font-family:Arial,sans-serif;text-align:center}main{width:100%;max-width:430px;padding:30px 20px;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);border-radius:24px}img{width:110px;height:110px;padding:7px;object-fit:contain;border-radius:50%;background:#fff}h1{color:#ffd76a}button{padding:12px 25px;border:0;border-radius:50px;background:#ffd76a;color:#002087;font-weight:bold}</style></head><body><main><img src="/pwa-icon-192.png" alt="Imdade Rohani"><h1>انٹرنیٹ دستیاب نہیں</h1><p>براہِ کرم اپنے موبائل کا Internet یا Wi-Fi چیک کریں۔</p><button onclick="location.reload()">دوبارہ کوشش کریں</button></main></body></html>`;
+  return `<!doctype html>
+<html lang="ur" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+<meta
+  name="theme-color"
+  content="#002087"
+>
+<title>انٹرنیٹ دستیاب نہیں</title>
+
+<style>
+*{
+  box-sizing:border-box
 }
 
+body{
+  min-height:100vh;
+  margin:0;
+  padding:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:
+    linear-gradient(
+      145deg,
+      #001449,
+      #002087,
+      #1769c2
+    );
+  color:#fff;
+  font-family:Arial,sans-serif;
+  text-align:center
+}
+
+main{
+  width:100%;
+  max-width:430px;
+  padding:30px 20px;
+  background:
+    rgba(255,255,255,.12);
+  border:
+    1px solid
+    rgba(255,255,255,.25);
+  border-radius:24px
+}
+
+img{
+  width:110px;
+  height:110px;
+  padding:7px;
+  object-fit:contain;
+  border-radius:50%;
+  background:#fff
+}
+
+h1{
+  color:#ffd76a
+}
+
+button{
+  padding:12px 25px;
+  border:0;
+  border-radius:50px;
+  background:#ffd76a;
+  color:#002087;
+  font-weight:bold
+}
+</style>
+</head>
+
+<body>
+<main>
+  <img
+    src="/pwa-icon-192.png"
+    alt="Imdade Rohani"
+  >
+
+  <h1>
+    انٹرنیٹ دستیاب نہیں
+  </h1>
+
+  <p>
+    براہِ کرم اپنے موبائل کا
+    Internet یا Wi-Fi چیک کریں۔
+  </p>
+
+  <button
+    onclick="location.reload()"
+  >
+    دوبارہ کوشش کریں
+  </button>
+</main>
+</body>
+</html>`;
+}
+
+/* =========================================================
+   GENERAL HELPERS
+   ========================================================= */
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": "*",
+
+    "Access-Control-Allow-Methods":
+      "GET, POST, OPTIONS",
+
+    "Access-Control-Allow-Headers":
+      "Content-Type",
+
+    "Access-Control-Max-Age":
+      "86400"
+  };
+}
+
+function jsonResponse(data, status = 200) {
+  return new Response(
+    JSON.stringify(data, null, 2),
+    {
+      status,
+
+      headers: {
+        ...corsHeaders(),
+
+        "Content-Type":
+          "application/json; charset=UTF-8",
+
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate",
+
+        "X-Content-Type-Options":
+          "nosniff"
+      }
+    }
+  );
+}
+
+function methodNotAllowed(allowedMethod) {
+  return jsonResponse(
+    {
+      success: false,
+
+      error:
+        "Method not allowed.",
+
+      allowed_method:
+        allowedMethod
+    },
+    405
+  );
+}
+
+function databaseMissingResponse() {
+  return jsonResponse(
+    {
+      success: false,
+
+      error:
+        "D1 database binding is missing.",
+
+      required_binding:
+        "DB"
+    },
+    500
+  );
+}
+
+async function readJsonBody(request) {
+  try {
+    const contentType =
+      request.headers.get(
+        "Content-Type"
+      ) || "";
+
+    if (
+      !contentType
+        .toLowerCase()
+        .includes(
+          "application/json"
+        )
+    ) {
+      return null;
+    }
+
+    return await request.json();
+
+  } catch (error) {
+    return null;
+  }
+}
+
+function cleanDeviceId(value) {
+  if (
+    typeof value !== "string"
+  ) {
+    return "";
+  }
+
+  const cleaned =
+    value
+      .trim()
+      .replace(
+        /[^a-zA-Z0-9_-]/g,
+        ""
+      )
+      .slice(0, 150);
+
+  if (
+    cleaned.length < 8
+  ) {
+    return "";
+  }
+
+  return cleaned;
+}
+
+function cleanShortText(
+  value,
+  maximumLength
+) {
+  if (
+    typeof value !== "string"
+  ) {
+    return "";
+  }
+
+  return value
+    .trim()
+    .slice(
+      0,
+      maximumLength
+    );
+}
+
+function safePositiveInteger(
+  value,
+  fallback
+) {
+  const number =
+    Number(value);
+
+  if (
+    !Number.isFinite(number) ||
+    number < 1
+  ) {
+    return fallback;
+  }
+
+  return Math.floor(number);
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4001 — PART 1 END
+   ========================================================= */
