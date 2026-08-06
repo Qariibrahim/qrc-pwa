@@ -1,0 +1,20 @@
+{
+  "name": "qrc-pwa",
+  "main": "worker.js",
+  "compatibility_date": "2026-08-02",
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "imdaderohani-pwa-tracker"
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  }
+}
