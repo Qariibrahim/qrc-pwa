@@ -1651,7 +1651,11 @@ async function sendInstallEmail(
         String(
           counts.inactive_users || 0
         ),
-
+      inactive_users_list:
+        String(
+          installation.inactive_users_list ||
+          "Koi inactive user mojood nahi hai."
+        ),
       device_id:
         String(
           installation.device_id ||
@@ -1695,6 +1699,12 @@ async function sendInstallEmail(
             String(
               counts.inactive_users || 0
             ),
+                     "",
+          "Inactive Users List:",
+          String(
+            installation.inactive_users_list ||
+            "Koi inactive user mojood nahi hai."
+          ),
           "Device ID: " +
             String(
               installation.device_id ||
