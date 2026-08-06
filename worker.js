@@ -1926,5 +1926,74 @@ async function getInactiveUsersList(env) {
    ========================================================= */
 
 /* =========================================================
+   CODE NO. PWA-TRACK-4005 — PART 2A
+   FORMAT INACTIVE USERS EMAIL LIST
+   ========================================================= */
+
+function formatInactiveUsersList(inactiveUsers) {
+  if (
+    !Array.isArray(inactiveUsers) ||
+    inactiveUsers.length === 0
+  ) {
+    return "Koi inactive user mojood nahi hai.";
+  }
+
+  return inactiveUsers
+    .map((user, index) => {
+      const lastActiveText =
+        user && user.last_active
+          ? new Date(
+              user.last_active
+            ).toLocaleString(
+              "en-IN",
+              {
+                timeZone: "Asia/Kolkata",
+                year: "numeric",
+                month: "2-digit",
+                day: "2-digit",
+                hour: "2-digit",
+                minute: "2-digit"
+              }
+            )
+          : "Unknown";
+
+      return [
+        "━━━━━━━━━━━━━━━━━━",
+        "Inactive User No. " +
+          String(index + 1),
+        "",
+        "Device ID: " +
+          String(
+            user.device_id || "unknown"
+          ),
+        "Last Active: " +
+          lastActiveText,
+        "Inactive Days: " +
+          String(
+            user.inactive_days || 0
+          ),
+        "App Version: " +
+          String(
+            user.app_version ||
+            DEFAULT_APP_VERSION
+          ),
+        "Platform: " +
+          String(
+            user.platform || "unknown"
+          ),
+        "Browser: " +
+          String(
+            user.browser || "unknown"
+          )
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4005 — PART 2A END
+   ========================================================= */
+
+/* =========================================================
    CODE NO. PWA-TRACK-4001 — PART 1 END
    ========================================================= */
