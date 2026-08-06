@@ -1813,5 +1813,118 @@ function calculateInactiveDays(lastActiveValue) {
    ========================================================= */
 
 /* =========================================================
+   CODE NO. PWA-TRACK-4005 — PART 1B
+   GET REAL INACTIVE USERS LIST
+   ========================================================= */
+
+async function getInactiveUsersList(env) {
+  if (!env || !env.DB) {
+    return [];
+  }
+
+  const settings = await env.DB
+    .prepare(
+      `
+        SELECT inactive_days
+        FROM pwa_settings
+        WHERE id = 1
+        LIMIT 1
+      `
+    )
+    .first();
+
+  const inactiveDaysLimit =
+    safePositiveInteger(
+      settings && settings.inactive_days,
+      15
+    );
+
+  const cutoffDate = new Date(
+    Date.now() -
+    inactiveDaysLimit *
+    24 *
+    60 *
+    60 *
+    1000
+  ).toISOString();
+
+  const result = await env.DB
+    .prepare(
+      `
+        SELECT
+          device_id,
+          installed_at,
+          last_active,
+          app_version,
+          status,
+          install_count,
+          update_count,
+          platform,
+          browser,
+          created_at,
+          updated_at
+        FROM pwa_users
+        WHERE last_active < ?
+        ORDER BY last_active ASC
+      `
+    )
+    .bind(cutoffDate)
+    .all();
+
+  const rows =
+    result &&
+    Array.isArray(result.results)
+      ? result.results
+      : [];
+
+  return rows.map(user => ({
+    device_id:
+      String(user.device_id || "unknown"),
+
+    installed_at:
+      user.installed_at || null,
+
+    last_active:
+      user.last_active || null,
+
+    inactive_days:
+      calculateInactiveDays(
+        user.last_active
+      ),
+
+    app_version:
+      String(
+        user.app_version ||
+        DEFAULT_APP_VERSION
+      ),
+
+    status:
+      String(user.status || "inactive"),
+
+    install_count:
+      Number(user.install_count || 0),
+
+    update_count:
+      Number(user.update_count || 0),
+
+    platform:
+      String(user.platform || "unknown"),
+
+    browser:
+      String(user.browser || "unknown"),
+
+    created_at:
+      user.created_at || null,
+
+    updated_at:
+      user.updated_at || null
+  }));
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4005 — PART 1B END
+   ========================================================= */
+
+/* =========================================================
    CODE NO. PWA-TRACK-4001 — PART 1 END
    ========================================================= */
