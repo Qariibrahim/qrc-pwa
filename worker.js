@@ -1777,5 +1777,41 @@ async function sendInstallEmail(
    EMAILJS INSTALL NOTIFICATION FUNCTION END
    ========================================================= */
 /* =========================================================
+   CODE NO. PWA-TRACK-4005 — PART 1A
+   INACTIVE USER DAYS HELPER FUNCTION
+   ========================================================= */
+
+function calculateInactiveDays(lastActiveValue) {
+  if (!lastActiveValue) {
+    return 0;
+  }
+
+  const lastActiveDate = new Date(lastActiveValue);
+
+  if (isNaN(lastActiveDate.getTime())) {
+    return 0;
+  }
+
+  const currentTime = Date.now();
+  const lastActiveTime = lastActiveDate.getTime();
+
+  const differenceMilliseconds =
+    currentTime - lastActiveTime;
+
+  if (differenceMilliseconds <= 0) {
+    return 0;
+  }
+
+  return Math.floor(
+    differenceMilliseconds /
+    (1000 * 60 * 60 * 24)
+  );
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4005 — PART 1A END
+   ========================================================= */
+
+/* =========================================================
    CODE NO. PWA-TRACK-4001 — PART 1 END
    ========================================================= */
