@@ -207,10 +207,18 @@ if (path === "/api/pwa/email-test") {
         },
         500
       );
+
     }
+  },
+
+  /* =========================================================
+     CODE NO. PWA-TRACK-4004 — PART 1
+     DAILY INACTIVE USER CHECK
+     ========================================================= */
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(runDailyInactiveCheck(env));
   }
 };
-
 /* =========================================================
    EMAILJS DIRECT TEST
    GET /api/pwa/email-test
@@ -724,6 +732,56 @@ async function handleStatus(request, env) {
     checked_at:
       new Date().toISOString()
   });
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4004 — PART 1
+   DAILY INACTIVE USER CHECK FUNCTION
+   ========================================================= */
+
+async function runDailyInactiveCheck(env) {
+  if (!env.DB) {
+    console.log(
+      "PWA INACTIVE CHECK: D1 database binding DB is missing"
+    );
+    return;
+  }
+
+  try {
+    const counts = await getPwaCounts(env);
+
+    console.log(
+      "PWA INACTIVE CHECK: Daily check completed successfully",
+      {
+        total_installations:
+          counts.total_installations,
+
+        active_users:
+          counts.active_users,
+
+        inactive_users:
+          counts.inactive_users,
+
+        inactive_days:
+          counts.inactive_days,
+
+        checked_at:
+          new Date().toISOString()
+      }
+    );
+
+  } catch (error) {
+    console.log(
+      "PWA INACTIVE CHECK: Failed",
+      String(
+        error && error.message
+          ? error.message
+          : error
+      )
+    );
+
+    throw error;
+  }
 }
 
 /* =========================================================
