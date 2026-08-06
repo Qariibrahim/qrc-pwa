@@ -253,6 +253,7 @@ async function handleEmailTest(request, env) {
    ========================================================= */
 
 async function handleInstall(request, env) {
+   console.log("PWA INSTALL: handleInstall function started");
   if (request.method !== "POST") {
     return methodNotAllowed("POST");
   }
@@ -380,11 +381,18 @@ async function handleInstall(request, env) {
   }
 
   const counts = await getPwaCounts(env);
+
+   console.log("PWA INSTALL: Database saved successfully", {
+  deviceId: deviceId,
+  isNewInstallation: isNewInstallation,
+  counts: counts
+});
   /* =====================================================
      CODE NO. PWA-TRACK-4003 — PART 2
      SEND EMAIL AFTER NEW INSTALLATION START
      ===================================================== */
 
+   console.log("PWA INSTALL: Sending EmailJS notification now");
   let emailResult = await sendInstallEmail(
   env,
   {
@@ -399,7 +407,7 @@ async function handleInstall(request, env) {
   },
   counts
 );
-
+console.log("PWA INSTALL: EmailJS result", emailResult);
   /* =====================================================
      CODE NO. PWA-TRACK-4003 — PART 2
      SEND EMAIL AFTER NEW INSTALLATION END
