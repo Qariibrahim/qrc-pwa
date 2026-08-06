@@ -864,8 +864,9 @@ async function handleStatus(request, env) {
    DAILY INACTIVE USER CHECK FUNCTION
    ========================================================= */
 
+
 async function runDailyInactiveCheck(env) {
-  if (!env.DB) {
+  if (!env || !env.DB) {
     console.log(
       "PWA INACTIVE CHECK: D1 database binding DB is missing"
     );
@@ -873,7 +874,63 @@ async function runDailyInactiveCheck(env) {
   }
 
   try {
-    const counts = await getPwaCounts(env);
+    const counts =
+      await getPwaCounts(env);
+
+    const inactiveUsers =
+      await getInactiveUsersList(env);
+
+    const inactiveUsersList =
+      formatInactiveUsersList(
+        inactiveUsers
+      );
+
+    let emailResult = {
+      success: false,
+      skipped: true,
+      reason:
+        "No inactive users found."
+    };
+
+    if (inactiveUsers.length > 0) {
+      emailResult =
+        await sendInstallEmail(
+          env,
+          {
+            device_id:
+              "daily_inactive_check",
+
+            app_version:
+              counts.latest_version,
+
+            platform:
+              "Cloudflare Worker",
+
+            browser:
+              "Automatic Daily Cron",
+
+            event_type:
+              "Daily Inactive Users Report",
+
+            inactive_users_list:
+              inactiveUsersList
+          },
+          counts
+        );
+    }
+
+    await env.DB
+      .prepare(
+        `
+          UPDATE pwa_settings
+          SET last_report_at = ?
+          WHERE id = 1
+        `
+      )
+      .bind(
+        new Date().toISOString()
+      )
+      .run();
 
     console.log(
       "PWA INACTIVE CHECK: Daily check completed successfully",
@@ -889,6 +946,12 @@ async function runDailyInactiveCheck(env) {
 
         inactive_days:
           counts.inactive_days,
+
+        inactive_list_count:
+          inactiveUsers.length,
+
+        email_notification:
+          emailResult,
 
         checked_at:
           new Date().toISOString()
@@ -908,7 +971,6 @@ async function runDailyInactiveCheck(env) {
     throw error;
   }
 }
-
 /* =========================================================
    DATABASE COUNTS
    ========================================================= */
