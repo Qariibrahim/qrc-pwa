@@ -56,6 +56,14 @@ export default {
 if (path === "/api/pwa/email-test") {
   return handleEmailTest(request, env);
 }
+/* =========================================================
+   CODE NO. PWA-TRACK-4004 — PART 3A
+   SECURE MANUAL INACTIVE CHECK API
+   ========================================================= */
+
+if (path === "/api/pwa/inactive-check") {
+  return handleManualInactiveCheck(request, env);
+}
       /* =============================================
          PWA MANIFEST
          ============================================= */
@@ -254,7 +262,124 @@ async function handleEmailTest(request, env) {
     checked_at: new Date().toISOString()
   });
 }
+/* =========================================================
+   CODE NO. PWA-TRACK-4004 — PART 3A
+   SECURE MANUAL INACTIVE CHECK FUNCTION
+   ========================================================= */
 
+async function handleManualInactiveCheck(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  if (!env.PWA_ADMIN_KEY) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "PWA_ADMIN_KEY secret is missing."
+      },
+      500
+    );
+  }
+
+  const url = new URL(request.url);
+
+  const suppliedKey =
+    String(
+      url.searchParams.get("key") || ""
+    ).trim();
+
+  if (
+    !suppliedKey ||
+    suppliedKey !== String(env.PWA_ADMIN_KEY)
+  ) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "Unauthorized manual check."
+      },
+      401
+    );
+  }
+
+  try {
+    console.log(
+      "PWA INACTIVE CHECK: Manual check started"
+    );
+
+    const counts = await getPwaCounts(env);
+
+    const emailResult = await sendInstallEmail(
+      env,
+      {
+        device_id: "manual_inactive_check",
+        app_version: counts.latest_version,
+        platform: "Cloudflare Worker",
+        browser: "Admin Manual Button",
+        event_type: "Manual Inactive Users Check"
+      },
+      counts
+    );
+
+    console.log(
+      "PWA INACTIVE CHECK: Manual check completed",
+      {
+        counts: counts,
+        emailResult: emailResult
+      }
+    );
+
+    return jsonResponse({
+      success: true,
+      test: "Manual Inactive Users Check",
+
+      total_installations:
+        counts.total_installations,
+
+      active_users:
+        counts.active_users,
+
+      inactive_users:
+        counts.inactive_users,
+
+      inactive_days:
+        counts.inactive_days,
+
+      email_notification:
+        emailResult,
+
+      checked_at:
+        new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.log(
+      "PWA INACTIVE CHECK: Manual check failed",
+      String(
+        error && error.message
+          ? error.message
+          : error
+      )
+    );
+
+    return jsonResponse(
+      {
+        success: false,
+        error: "Manual inactive check failed.",
+        message: String(
+          error && error.message
+            ? error.message
+            : error
+        )
+      },
+      500
+    );
+  }
+}
 /* =========================================================
    API: NEW INSTALLATION
    POST /api/pwa/install
