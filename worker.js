@@ -867,6 +867,116 @@ async function handleStatus(request, env) {
 }
 
 /* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 1B
+   PWA VERSION CHECK FUNCTION
+   ========================================================= */
+
+async function handleVersionCheck(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  try {
+    const url = new URL(request.url);
+
+    const currentVersion =
+      cleanShortText(
+        url.searchParams.get("current_version") || "",
+        50
+      );
+
+    const settings = await env.DB
+      .prepare(
+        `
+          SELECT
+            latest_version,
+            force_update
+          FROM pwa_settings
+          WHERE id = 1
+          LIMIT 1
+        `
+      )
+      .first();
+
+    const latestVersion =
+      String(
+        settings &&
+        settings.latest_version
+          ? settings.latest_version
+          : DEFAULT_APP_VERSION
+      );
+
+    const forceUpdate =
+      Number(
+        settings &&
+        settings.force_update
+          ? settings.force_update
+          : 0
+      ) === 1;
+
+    const versionProvided =
+      Boolean(currentVersion);
+
+    const updateAvailable =
+      versionProvided &&
+      currentVersion !== latestVersion;
+
+    const updateRequired =
+      updateAvailable &&
+      forceUpdate;
+
+    return jsonResponse({
+      success: true,
+
+      current_version:
+        currentVersion || null,
+
+      latest_version:
+        latestVersion,
+
+      version_provided:
+        versionProvided,
+
+      update_available:
+        updateAvailable,
+
+      force_update:
+        forceUpdate,
+
+      update_required:
+        updateRequired,
+
+      checked_at:
+        new Date().toISOString()
+    });
+
+  } catch (error) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "PWA version check failed.",
+        message:
+          String(
+            error && error.message
+              ? error.message
+              : error
+          )
+      },
+      500
+    );
+  }
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 1B END
+   ========================================================= */
+
+/* =========================================================
    CODE NO. PWA-TRACK-4004 — PART 1
    DAILY INACTIVE USER CHECK FUNCTION
    ========================================================= */
