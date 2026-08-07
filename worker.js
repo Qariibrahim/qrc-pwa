@@ -1656,7 +1656,13 @@ function pwaUpdateClientCode() {
   return `
 (function () {
 
-  const CURRENT_VERSION = "1";
+  const testParams =
+  new URLSearchParams(window.location.search);
+
+const CURRENT_VERSION =
+  testParams.get("pwa_test_update") === "1"
+    ? "0"
+    : "1";
 
   async function checkPwaUpdate() {
     try {
