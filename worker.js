@@ -2262,6 +2262,34 @@ async function sendInstallEmail(
       }
     );
 
+/* =========================================================
+   CODE NO. PWA-TRACK-4005 — DYNAMIC EMAIL HEADING
+   ========================================================= */
+
+const eventType =
+  String(
+    installation.event_type ||
+    "New PWA Installation"
+  );
+
+const isInactiveReport =
+  eventType === "Manual Inactive Users Check" ||
+  eventType === "Daily Inactive Users Report";
+
+const emailHeading =
+  isInactiveReport
+    ? "PWA Inactive Users Report"
+    : eventType === "PWA Reinstallation"
+      ? "PWA Reinstallation"
+      : "Nayi PWA Installation";
+
+const emailIntro =
+  isInactiveReport
+    ? "Imdade Rohani App ki inactive users report tayyar hui hai."
+    : eventType === "PWA Reinstallation"
+      ? "Imdade Rohani App dobara install hui hai."
+      : "Imdade Rohani App ki nayi installation hui hai.";
+   
   const emailPayload = {
     service_id:
       env.EMAILJS_SERVICE_ID,
