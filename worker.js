@@ -1395,7 +1395,7 @@ async function serveIcon(size) {
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v1";
+const VERSION = "imdaderohani-pwa-v2";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -1852,7 +1852,12 @@ const CURRENT_VERSION =
                 });
             }
 
-            await registration?.update();
+            registration?.update().catch(function(error){
+  console.log(
+    "Service Worker background update failed",
+    error
+  );
+});
           }
 
         } catch (error) {
