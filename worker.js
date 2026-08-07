@@ -43,7 +43,14 @@ export default {
       if (path === "/api/pwa/status") {
         return handleStatus(request, env);
       }
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 1A
+   PWA VERSION CHECK API
+   ========================================================= */
 
+if (path === "/api/pwa/version") {
+  return handleVersionCheck(request, env);
+}
       if (path === "/api/pwa/health") {
         return jsonResponse({
           success: true,
