@@ -1875,7 +1875,9 @@ localStorage.setItem(
 window.location.href =
   data.update_url ||
   "/?pwa_update=1";
-
+      }
+    );
+   
     box.appendChild(icon);
     box.appendChild(title);
     box.appendChild(message);
