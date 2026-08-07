@@ -1648,6 +1648,283 @@ self.addEventListener(
 }
 
 /* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2C-2
+   PWA UPDATE CLIENT POPUP FUNCTION
+   ========================================================= */
+
+function pwaUpdateClientCode() {
+  return `
+(function () {
+
+  const CURRENT_VERSION = "1";
+
+  async function checkPwaUpdate() {
+    try {
+      const response = await fetch(
+        "/api/pwa/version?current_version=" +
+        encodeURIComponent(CURRENT_VERSION),
+        {
+          cache: "no-store"
+        }
+      );
+
+      if (!response.ok) {
+        return;
+      }
+
+      const data = await response.json();
+
+      if (
+        !data ||
+        !data.success ||
+        !data.show_update_popup
+      ) {
+        return;
+      }
+
+      showPwaUpdatePopup(data);
+
+    } catch (error) {
+      console.log(
+        "PWA update check failed",
+        error
+      );
+    }
+  }
+
+
+  function showPwaUpdatePopup(data) {
+
+    if (
+      document.getElementById(
+        "imdaderohani-pwa-update-overlay"
+      )
+    ) {
+      return;
+    }
+
+    const overlay =
+      document.createElement("div");
+
+    overlay.id =
+      "imdaderohani-pwa-update-overlay";
+
+    overlay.style.cssText = [
+      "position:fixed",
+      "inset:0",
+      "z-index:2147483647",
+      "background:rgba(0,0,0,.55)",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "padding:18px",
+      "font-family:Arial,sans-serif"
+    ].join(";");
+
+
+    const box =
+      document.createElement("div");
+
+    box.style.cssText = [
+      "width:100%",
+      "max-width:390px",
+      "background:#ffffff",
+      "border-radius:22px",
+      "padding:24px 20px",
+      "box-shadow:0 20px 60px rgba(0,0,0,.30)",
+      "text-align:center",
+      "direction:rtl"
+    ].join(";");
+
+
+    const icon =
+      document.createElement("div");
+
+    icon.textContent = "🔄";
+
+    icon.style.cssText = [
+      "font-size:48px",
+      "margin-bottom:10px"
+    ].join(";");
+
+
+    const title =
+      document.createElement("h2");
+
+    title.textContent =
+      data.update_title ||
+      "نئی اپڈیٹ دستیاب ہے";
+
+    title.style.cssText = [
+      "margin:0 0 12px",
+      "color:#002087",
+      "font-size:24px",
+      "line-height:1.6"
+    ].join(";");
+
+
+    const message =
+      document.createElement("p");
+
+    message.textContent =
+      data.update_message ||
+      "Imdade Rohani App کا نیا ورژن دستیاب ہے۔";
+
+    message.style.cssText = [
+      "margin:0 0 20px",
+      "color:#444",
+      "font-size:16px",
+      "line-height:2"
+    ].join(";");
+
+
+    const button =
+      document.createElement("button");
+
+    button.textContent =
+      data.update_button_text ||
+      "ابھی اپڈیٹ کریں";
+
+    button.style.cssText = [
+      "width:100%",
+      "border:0",
+      "border-radius:50px",
+      "padding:14px 18px",
+      "background:#002087",
+      "color:#fff",
+      "font-size:17px",
+      "font-weight:bold",
+      "cursor:pointer"
+    ].join(";");
+
+
+    button.addEventListener(
+      "click",
+      async function () {
+
+        button.disabled = true;
+        button.textContent =
+          "اپڈیٹ ہو رہی ہے...";
+
+        try {
+
+          if (
+            "serviceWorker" in navigator
+          ) {
+
+            const registration =
+              await navigator
+                .serviceWorker
+                .getRegistration();
+
+            if (
+              registration &&
+              registration.waiting
+            ) {
+              registration.waiting
+                .postMessage({
+                  type:
+                    "PWA_UPDATE_VERSION",
+                  version:
+                    data.latest_version
+                });
+            }
+
+            if (
+              registration &&
+              registration.active
+            ) {
+              registration.active
+                .postMessage({
+                  type:
+                    "PWA_UPDATE_VERSION",
+                  version:
+                    data.latest_version
+                });
+            }
+
+            await registration?.update();
+          }
+
+        } catch (error) {
+          console.log(
+            "PWA update action failed",
+            error
+          );
+        }
+
+        window.location.href =
+          data.update_url ||
+          "/?pwa_update=1";
+      }
+    );
+
+
+    box.appendChild(icon);
+    box.appendChild(title);
+    box.appendChild(message);
+    box.appendChild(button);
+
+
+    if (data.allow_dismiss) {
+
+      const close =
+        document.createElement("button");
+
+      close.textContent =
+        "بعد میں";
+
+      close.style.cssText = [
+        "margin-top:12px",
+        "border:0",
+        "background:transparent",
+        "color:#666",
+        "font-size:15px",
+        "cursor:pointer"
+      ].join(";");
+
+      close.addEventListener(
+        "click",
+        function () {
+          overlay.remove();
+        }
+      );
+
+      box.appendChild(close);
+    }
+
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  }
+
+
+  if (
+    document.readyState === "loading"
+  ) {
+    document.addEventListener(
+      "DOMContentLoaded",
+      checkPwaUpdate
+    );
+  } else {
+    checkPwaUpdate();
+  }
+
+
+  setInterval(
+    checkPwaUpdate,
+    30 * 60 * 1000
+  );
+
+})();
+`;
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2C-2 END
+   ========================================================= */
+
+/* =========================================================
    OFFLINE PAGE
    ========================================================= */
 
