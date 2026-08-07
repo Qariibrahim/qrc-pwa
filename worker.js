@@ -8,7 +8,7 @@ const SITE_ORIGIN = "https://qrc.imdaderohani.in";
 const LOGO_URL =
   "https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhswMSCDL7cBASmV4gtFdF0w9bsk4vP5VtIRxJZYdqwzKCbCP35-cy9oYYCBTjhdhVQjQwS7P-Vdf5Z8PZLIaj-LtPsx6TvGOxdOTmMM-Y_oHvpEWd4JuVdCw9wyn2w-6p0Vdt4QLQXF80Qz-pWfpdX6DaIjlIXgiODrDffCsPdS6-AOIRCmkR0oZXGAuD9/s500/38030.png";
 
-const DEFAULT_APP_VERSION = "1";
+const DEFAULT_APP_VERSION = "2";
 
 /* =========================================================
    MAIN WORKER
