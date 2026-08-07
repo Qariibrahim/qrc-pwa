@@ -165,6 +165,36 @@ if (path === "/api/pwa/inactive-check") {
         });
       }
 
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2C-1
+   PWA UPDATE CLIENT SCRIPT ROUTE
+   ========================================================= */
+
+if (path === "/pwa-update-client.js") {
+  return new Response(
+    pwaUpdateClientCode(),
+    {
+      headers: {
+        "Content-Type":
+          "application/javascript; charset=UTF-8",
+
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate",
+
+        "Access-Control-Allow-Origin":
+          "*",
+
+        "X-Content-Type-Options":
+          "nosniff"
+      }
+    }
+  );
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2C-1 END
+   ========================================================= */
+       
       /* =============================================
          OFFLINE PAGE
          ============================================= */
