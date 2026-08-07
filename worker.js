@@ -350,17 +350,28 @@ async function handleManualInactiveCheck(request, env) {
 
     const counts = await getPwaCounts(env);
 
-    const emailResult = await sendInstallEmail(
-      env,
-      {
-        device_id: "manual_inactive_check",
-        app_version: counts.latest_version,
-        platform: "Cloudflare Worker",
-        browser: "Admin Manual Button",
-        event_type: "Manual Inactive Users Check"
-      },
-      counts
-    );
+/* اصل inactive users کی list حاصل کریں */
+const inactiveUsers =
+  await getInactiveUsersList(env);
+
+/* Email کے لیے readable list تیار کریں */
+const inactiveUsersList =
+  formatInactiveUsersList(inactiveUsers);
+
+const emailResult = await sendInstallEmail(
+  env,
+  {
+    device_id: "manual_inactive_check",
+    app_version: counts.latest_version,
+    platform: "Cloudflare Worker",
+    browser: "Admin Manual Button",
+    event_type: "Manual Inactive Users Check",
+
+    /* اصل inactive users کی تفصیل EmailJS کو بھیجیں */
+    inactive_users_list: inactiveUsersList
+  },
+  counts
+);
 
     console.log(
       "PWA INACTIVE CHECK: Manual check completed",
