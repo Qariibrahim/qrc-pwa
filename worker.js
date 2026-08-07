@@ -1656,6 +1656,14 @@ function pwaUpdateClientCode() {
   return `
 (function () {
 
+const isStandalonePwa =
+  window.matchMedia("(display-mode: standalone)").matches ||
+  window.navigator.standalone === true;
+
+if (!isStandalonePwa) {
+  return;
+}
+
   const testParams =
   new URLSearchParams(window.location.search);
 
