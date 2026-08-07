@@ -2305,8 +2305,13 @@ const emailIntro =
 
     template_params: {
       event_type:
-  installation.event_type ||
-  "New PWA Installation",
+  eventType,
+
+email_heading:
+  emailHeading,
+
+email_intro:
+  emailIntro,
 
       app_name:
         "Imdade Rohani App",
