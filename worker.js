@@ -1447,6 +1447,25 @@ self.addEventListener(
     const requestUrl =
       new URL(request.url);
 
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2B-1
+   ALWAYS FETCH PWA API FROM NETWORK
+   ========================================================= */
+
+if (
+  requestUrl.pathname.startsWith("/api/")
+) {
+  event.respondWith(
+    fetch(request)
+  );
+
+  return;
+}
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2B-1 END
+   ========================================================= */
+
     if (
       request.mode === "navigate"
     ) {
