@@ -929,6 +929,45 @@ async function handleVersionCheck(request, env) {
       updateAvailable &&
       forceUpdate;
 
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2A
+   UPDATE POPUP INFORMATION
+   ========================================================= */
+
+const updateTitle =
+  updateRequired
+    ? "ضروری اپڈیٹ دستیاب ہے"
+    : updateAvailable
+      ? "نئی اپڈیٹ دستیاب ہے"
+      : "آپ کی ایپ تازہ ترین ہے";
+
+const updateMessage =
+  updateRequired
+    ? "Imdade Rohani App کا نیا ورژن دستیاب ہے۔ ایپ استعمال جاری رکھنے کے لیے ابھی اپڈیٹ کریں۔"
+    : updateAvailable
+      ? "Imdade Rohani App کا نیا ورژن دستیاب ہے۔ بہتر کارکردگی کے لیے ایپ اپڈیٹ کریں۔"
+      : "آپ پہلے ہی Imdade Rohani App کا تازہ ترین ورژن استعمال کر رہے ہیں۔";
+
+const updateButtonText =
+  updateAvailable
+    ? "ابھی اپڈیٹ کریں"
+    : "ٹھیک ہے";
+
+const showUpdatePopup =
+  updateAvailable;
+
+const allowDismiss =
+  !updateRequired;
+
+const updateUrl =
+  SITE_ORIGIN +
+  "/?pwa_update=1&version=" +
+  encodeURIComponent(latestVersion);
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2A INFORMATION END
+   ========================================================= */
+     
     return jsonResponse({
       success: true,
 
@@ -950,6 +989,24 @@ async function handleVersionCheck(request, env) {
       update_required:
         updateRequired,
 
+      show_update_popup:
+        showUpdatePopup,
+
+      allow_dismiss:
+        allowDismiss,
+
+      update_title:
+        updateTitle,
+
+      update_message:
+        updateMessage,
+
+      update_button_text:
+        updateButtonText,
+
+      update_url:
+        updateUrl,
+       
       checked_at:
         new Date().toISOString()
     });
