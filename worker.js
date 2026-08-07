@@ -1659,10 +1659,13 @@ function pwaUpdateClientCode() {
   const testParams =
   new URLSearchParams(window.location.search);
 
+const savedVersion =
+  localStorage.getItem("imdaderohani_pwa_version") || "1";
+
 const CURRENT_VERSION =
   testParams.get("pwa_test_update") === "1"
     ? "0"
-    : "1";
+    : savedVersion;
 
   async function checkPwaUpdate() {
     try {
@@ -1859,12 +1862,14 @@ const CURRENT_VERSION =
           );
         }
 
-        window.location.href =
-          data.update_url ||
-          "/?pwa_update=1";
-      }
-    );
+localStorage.setItem(
+  "imdaderohani_pwa_version",
+  String(data.latest_version)
+);
 
+window.location.href =
+  data.update_url ||
+  "/?pwa_update=1";
 
     box.appendChild(icon);
     box.appendChild(title);
