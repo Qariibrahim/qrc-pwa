@@ -1555,6 +1555,53 @@ if (
   }
 );
 
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2B-2
+   PWA UPDATE VERSION MESSAGE HANDLER
+   ========================================================= */
+
+self.addEventListener(
+  "message",
+  event => {
+
+    if (
+      !event.data ||
+      event.data.type !== "PWA_UPDATE_VERSION"
+    ) {
+      return;
+    }
+
+    const newVersion =
+      String(
+        event.data.version || ""
+      ).trim();
+
+    if (!newVersion) {
+      return;
+    }
+
+    event.waitUntil(
+      caches
+        .keys()
+        .then(keys =>
+          Promise.all(
+            keys.map(
+              key =>
+                caches.delete(key)
+            )
+          )
+        )
+        .then(() =>
+          self.skipWaiting()
+        )
+    );
+  }
+);
+
+/* =========================================================
+   CODE NO. PWA-TRACK-4006 — PART 2B-2 END
+   ========================================================= */
+
 self.addEventListener(
   "message",
   event => {
