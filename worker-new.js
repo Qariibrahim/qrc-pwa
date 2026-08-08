@@ -2339,12 +2339,7 @@ const isStandalonePwa =
   ).matches ||
   window.navigator.standalone === true;
 
-const isUpdateTest =
-  new URLSearchParams(
-    window.location.search
-  ).get("pwa_test_update") === "1";
-
-if (!isStandalonePwa && !isUpdateTest) {
+if (!isStandalonePwa) {
   return;
 }
   const params =
