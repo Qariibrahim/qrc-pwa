@@ -778,11 +778,13 @@ async function handleActivity(request, env) {
       )
       .run();
 
-    if (versionChanged) {
+    let updateEmailResult = null;
+
+if (versionChanged) {
   const countsAfterUpdate =
     await getPwaCounts(env);
 
-  await sendInstallEmail(
+  updateEmailResult = await sendInstallEmail(
     env,
     {
       device_id: deviceId,
@@ -793,7 +795,7 @@ async function handleActivity(request, env) {
     },
     countsAfterUpdate
   );
-    }
+}
 
   const counts = await getPwaCounts(env);
 
@@ -812,6 +814,9 @@ async function handleActivity(request, env) {
     app_version:
       appVersion,
 
+email_notification:
+  updateEmailResult,
+     
     total_installations:
       counts.total_installations,
 
