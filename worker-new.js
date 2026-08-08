@@ -2333,16 +2333,20 @@ function pwaUpdateClientCode() {
   return `
 (function () {
 
-  const isStandalonePwa =
-    window.matchMedia(
-      "(display-mode: standalone)"
-    ).matches ||
-    window.navigator.standalone === true;
+const isStandalonePwa =
+  window.matchMedia(
+    "(display-mode: standalone)"
+  ).matches ||
+  window.navigator.standalone === true;
 
-  if (!isStandalonePwa) {
-    return;
-  }
+const isUpdateTest =
+  new URLSearchParams(
+    window.location.search
+  ).get("pwa_test_update") === "1";
 
+if (!isStandalonePwa && !isUpdateTest) {
+  return;
+}
   const params =
     new URLSearchParams(
       window.location.search
