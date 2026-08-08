@@ -778,11 +778,22 @@ async function handleActivity(request, env) {
       )
       .run();
 
-    /*
-      یہ Variable اگلے Gmail Part میں استعمال ہوگا۔
-    */
-    void versionChanged;
-  }
+    if (versionChanged) {
+  const countsAfterUpdate =
+    await getPwaCounts(env);
+
+  await sendInstallEmail(
+    env,
+    {
+      device_id: deviceId,
+      app_version: appVersion,
+      platform: platform,
+      browser: browser,
+      event_type: "PWA App Updated"
+    },
+    countsAfterUpdate
+  );
+    }
 
   const counts = await getPwaCounts(env);
 
