@@ -2364,7 +2364,7 @@ email_intro:
 
       message:
         [
-          "Imdade Rohani App ki nayi installation hui hai.",
+          emailIntro,
           "",
           "Kul installations: " +
             String(
