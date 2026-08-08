@@ -2290,16 +2290,20 @@ const isInactiveReport =
 const emailHeading =
   isInactiveReport
     ? "PWA Inactive Users Report"
-    : eventType === "PWA Reinstallation"
-      ? "PWA Reinstallation"
-      : "Nayi PWA Installation";
+    : eventType === "PWA App Updated"
+      ? "Imdade Rohani App Updated"
+      : eventType === "PWA Reinstallation"
+        ? "PWA Reinstallation"
+        : "Nayi PWA Installation";
 
 const emailIntro =
   isInactiveReport
     ? "Imdade Rohani App ki inactive users report tayyar hui hai."
-    : eventType === "PWA Reinstallation"
-      ? "Imdade Rohani App dobara install hui hai."
-      : "Imdade Rohani App ki nayi installation hui hai.";
+    : eventType === "PWA App Updated"
+      ? "Imdade Rohani App successfully update hui hai."
+      : eventType === "PWA Reinstallation"
+        ? "Imdade Rohani App dobara install hui hai."
+        : "Imdade Rohani App ki nayi installation hui hai.";
    
   const emailPayload = {
     service_id:
