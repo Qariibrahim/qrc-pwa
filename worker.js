@@ -282,13 +282,13 @@ async function handleEmailTest(request, env) {
 
   const emailResult = await sendInstallEmail(
     env,
-    {
-      device_id: "manual_email_test_001",
-      app_version: DEFAULT_APP_VERSION,
-      platform: "Manual Browser Test",
-      browser: "Google Chrome",
-      event_type: "EmailJS Manual Test"
-    },
+   {
+  device_id: "manual_update_test_001",
+  app_version: "6",
+  platform: "Android PWA",
+  browser: "Google Chrome",
+  event_type: "PWA App Updated"
+},
     counts
   );
 
