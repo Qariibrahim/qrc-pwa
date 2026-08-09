@@ -2607,6 +2607,31 @@ if (currentDeviceId === TEST_DEVICE_ID) {
   );
 }
 
+try {
+  await fetch(
+    "/api/pwa/activity",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        device_id: currentDeviceId,
+        app_version: String(
+          data.latest_version
+        ),
+        platform: "Android PWA",
+        browser: "Google Chrome"
+      })
+    }
+  );
+} catch (error) {
+  console.log(
+    "PWA update activity failed",
+    error
+  );
+}
+
         localStorage.setItem(
           "imdaderohani_pwa_version",
           String(
