@@ -2400,6 +2400,19 @@ const currentVersion =
         return;
       }
 
+const completedUpdateVersion =
+  localStorage.getItem(
+    "irPwaCompletedUpdateVersion"
+  );
+
+if (
+  completedUpdateVersion &&
+  String(completedUpdateVersion) ===
+    String(data.latest_version)
+) {
+  return;
+}
+
       showPwaUpdatePopup(data);
 
     } catch (error) {
@@ -2539,6 +2552,13 @@ const currentVersion =
 
         button.textContent =
           "اپڈیٹ ہو رہی ہے...";
+
+localStorage.setItem(
+  "irPwaCompletedUpdateVersion",
+  String(
+    data.latest_version
+  )
+);
 
         try {
           if (
