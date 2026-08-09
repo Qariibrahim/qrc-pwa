@@ -2191,6 +2191,18 @@ self.addEventListener(
       return;
     }
 
+if (
+  requestUrl.pathname === "/pwa-update-client.js"
+) {
+  event.respondWith(
+    fetch(request, {
+      cache: "no-store"
+    })
+  );
+
+  return;
+}
+
     if (
       request.mode === "navigate"
     ) {
