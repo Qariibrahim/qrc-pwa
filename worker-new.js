@@ -2608,7 +2608,7 @@ if (currentDeviceId === TEST_DEVICE_ID) {
 }
 
 try {
-  await fetch(
+  const activityResponse = await fetch(
     "/api/pwa/activity",
     {
       method: "POST",
@@ -2625,10 +2625,27 @@ try {
       })
     }
   );
+
+  const activityData =
+    await activityResponse.json();
+
+  localStorage.setItem(
+    "irPwaLastUpdateEmailResult",
+    JSON.stringify(
+      activityData.email_notification || null
+    )
+  );
+
 } catch (error) {
-  console.log(
-    "PWA update activity failed",
-    error
+  localStorage.setItem(
+    "irPwaLastUpdateEmailResult",
+    JSON.stringify({
+      success: false,
+      error:
+        error && error.message
+          ? error.message
+          : String(error)
+    })
   );
 }
 
