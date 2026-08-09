@@ -2348,17 +2348,28 @@ if (!isStandalonePwa) {
     );
 
   const savedVersion =
-    localStorage.getItem(
-      "imdaderohani_pwa_version"
-    ) || "1";
+  localStorage.getItem(
+    "imdaderohani_pwa_version"
+  ) || "1";
 
-  const currentVersion =
-    params.get(
-      "pwa_test_update"
-    ) === "1"
-      ? "0"
-      : savedVersion;
+const currentDeviceId =
+  localStorage.getItem(
+    "irPwaDeviceId"
+  ) || "";
 
+const TEST_DEVICE_ID =
+  "ir_ea8318d816f54237a4fcfad94ef85e85";
+
+const singleDeviceTestDone =
+  localStorage.getItem(
+    "irPwaSingleUpdateTestDone"
+  ) === "1";
+
+const currentVersion =
+  currentDeviceId === TEST_DEVICE_ID &&
+  !singleDeviceTestDone
+    ? "0"
+    : savedVersion;
 
   async function checkPwaUpdate() {
     try {
@@ -2588,6 +2599,13 @@ if (!isStandalonePwa) {
             error
           );
         }
+
+if (currentDeviceId === TEST_DEVICE_ID) {
+  localStorage.setItem(
+    "irPwaSingleUpdateTestDone",
+    "1"
+  );
+}
 
         localStorage.setItem(
           "imdaderohani_pwa_version",
