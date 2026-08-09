@@ -2362,7 +2362,7 @@ const TEST_DEVICE_ID =
 
 const singleDeviceTestDone =
   localStorage.getItem(
-    "irPwaSingleUpdateTestDone"
+    "irPwaSingleUpdateEmailTestDone"
   ) === "1";
 
 const currentVersion =
@@ -2602,7 +2602,7 @@ const currentVersion =
 
 if (currentDeviceId === TEST_DEVICE_ID) {
   localStorage.setItem(
-    "irPwaSingleUpdateTestDone",
+    "irPwaSingleUpdateEmailTestDone"
     "1"
   );
 }
