@@ -2362,13 +2362,13 @@ const TEST_DEVICE_ID =
 
 const singleDeviceTestDone =
   localStorage.getItem(
-    "irPwaSingleUpdateEmailTestDone",
+    "irPwaSingleUpdateEmailDiagTestDone",
   ) === "1";
 
 const currentVersion =
   currentDeviceId === TEST_DEVICE_ID &&
   !singleDeviceTestDone
-    ? "0"
+    ? "5"
     : savedVersion;
 
   async function checkPwaUpdate() {
@@ -2602,7 +2602,7 @@ const currentVersion =
 
 if (currentDeviceId === TEST_DEVICE_ID) {
   localStorage.setItem(
-    "irPwaSingleUpdateEmailTestDone",
+    "irPwaSingleUpdateEmailDiagTestDone",
     "1"
   );
 }
