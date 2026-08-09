@@ -2369,19 +2369,8 @@ const currentDeviceId =
     "irPwaDeviceId"
   ) || "";
 
-const TEST_DEVICE_ID =
-  "ir_ea8318d816f54237a4fcfad94ef85e85";
-
-const singleDeviceTestDone =
-  localStorage.getItem(
-    "irPwaFirstOpenFinalTestDone",
-  ) === "1";
-
 const currentVersion =
-  currentDeviceId === TEST_DEVICE_ID &&
-  !singleDeviceTestDone
-    ? "5"
-    : savedVersion;
+  savedVersion;
 
   async function checkPwaUpdate() {
     try {
@@ -2612,54 +2601,29 @@ const currentVersion =
           );
         }
 
-if (currentDeviceId === TEST_DEVICE_ID) {
-  localStorage.setItem(
-    "irPwaFirstOpenFinalTestDone",
-    "1"
-  );
-}
-
-try {
-  const activityResponse = await fetch(
-    "/api/pwa/activity",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        device_id: currentDeviceId,
-        app_version: String(
-          data.latest_version
-        ),
-        platform: "Android PWA",
-        browser: "Google Chrome"
-      })
-    }
-  );
-
-  const activityData =
-    await activityResponse.json();
-
-  localStorage.setItem(
-    "irPwaLastUpdateEmailResult",
-    JSON.stringify(
-      activityData.email_notification || null
-    )
-  );
-
-} catch (error) {
-  localStorage.setItem(
-    "irPwaLastUpdateEmailResult",
-    JSON.stringify({
-      success: false,
-      error:
-        error && error.message
-          ? error.message
-          : String(error)
+fetch(
+  "/api/pwa/activity",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    keepalive: true,
+    body: JSON.stringify({
+      device_id: currentDeviceId,
+      app_version: String(
+        data.latest_version
+      ),
+      platform: "Android PWA",
+      browser: "Google Chrome"
     })
+  }
+).catch(error => {
+  console.log(
+    "PWA update activity failed",
+    error
   );
-}
+});
 
         localStorage.setItem(
           "imdaderohani_pwa_version",
