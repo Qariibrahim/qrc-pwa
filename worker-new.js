@@ -2406,10 +2406,20 @@ let currentVersion =
    Existing user = saved/database version
    ============================================= */
 
-async function resolveInitialVersion() {
+ async function resolveInitialVersion() {
 
   try {
 
+    /* Existing installed application */
+    if (savedVersion) {
+
+      currentVersion =
+        String(savedVersion);
+
+      return currentVersion;
+    }
+
+    /* Fresh installation only */
     const statusResponse =
       await fetch(
         "/api/pwa/status?device_id=" +
@@ -2428,32 +2438,31 @@ async function resolveInitialVersion() {
     const statusData =
       await statusResponse.json();
 
-    let initialVersion = "";
-
     if (
-  statusData &&
-  statusData.success &&
-  statusData.latest_version
-) {
-
-  initialVersion =
-    String(
+      statusData &&
+      statusData.success &&
       statusData.latest_version
-    );
-}
-
-    if (initialVersion) {
+    ) {
 
       currentVersion =
-        initialVersion;
+        String(
+          statusData.latest_version
+        );
 
       localStorage.setItem(
         "imdaderohani_pwa_version",
-        initialVersion
+        currentVersion
       );
+
+      localStorage.setItem(
+        "irPwaCompletedUpdateVersion",
+        currentVersion
+      );
+
+      return currentVersion;
     }
 
-    return currentVersion;
+    return "";
 
   } catch (error) {
 
