@@ -68,6 +68,11 @@ export default {
         return handleManualInactiveCheck(request, env);
       }
 
+/* SECURE GLOBAL UPDATE ADMIN */
+if (path === "/api/pwa/global-update") {
+  return handleGlobalUpdateAdmin(request, env);
+}
+       
       /* =============================================
          PWA MANIFEST
          ============================================= */
@@ -1911,6 +1916,418 @@ async function handleManualInactiveCheck(
   }
 }
 
+/* =========================================================
+   SECURE GLOBAL PWA UPDATE ADMIN
+   GET  = show confirmation page
+   POST = increase version and release update
+   ========================================================= */
+
+async function handleGlobalUpdateAdmin(
+  request,
+  env
+) {
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  if (!env.PWA_ADMIN_KEY) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "PWA_ADMIN_KEY secret is missing."
+      },
+      500
+    );
+  }
+
+  const url =
+    new URL(request.url);
+
+  const suppliedKey =
+    cleanText(
+      url.searchParams.get("key")
+    );
+
+  if (
+    !suppliedKey ||
+    suppliedKey !==
+      String(env.PWA_ADMIN_KEY)
+  ) {
+    return new Response(
+      `
+      <!doctype html>
+      <html lang="ur" dir="rtl">
+      <head>
+        <meta charset="utf-8">
+        <meta name="viewport"
+              content="width=device-width,initial-scale=1">
+        <title>Unauthorized</title>
+      </head>
+      <body style="
+        font-family:Arial,sans-serif;
+        text-align:center;
+        padding:40px;
+      ">
+        <h2>غیر مجاز رسائی</h2>
+        <p>Admin Key درست نہیں ہے۔</p>
+      </body>
+      </html>
+      `,
+      {
+        status: 401,
+        headers: {
+          "Content-Type":
+            "text/html; charset=UTF-8"
+        }
+      }
+    );
+  }
+
+  const settings =
+    await getPwaSettings(env);
+
+  const currentVersion =
+    normalizeVersion(
+      settings.latest_version
+    );
+
+  /*
+    GET request:
+    Show safe confirmation page only.
+    No update is released yet.
+  */
+  if (request.method === "GET") {
+
+    const nextVersion =
+      String(
+        Math.max(
+          0,
+          parseInt(
+            currentVersion,
+            10
+          ) || 0
+        ) + 1
+      );
+
+    return new Response(
+      `
+      <!doctype html>
+      <html lang="ur" dir="rtl">
+      <head>
+        <meta charset="utf-8">
+        <meta
+          name="viewport"
+          content="width=device-width,initial-scale=1"
+        >
+        <title>Imdade Rohani PWA Update</title>
+
+        <style>
+          *{
+            box-sizing:border-box;
+          }
+
+          body{
+            margin:0;
+            padding:20px;
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background:#eef4ff;
+            font-family:Arial,sans-serif;
+          }
+
+          .card{
+            width:100%;
+            max-width:480px;
+            background:#ffffff;
+            border-radius:24px;
+            padding:28px 22px;
+            box-shadow:
+              0 14px 40px rgba(0,0,0,.14);
+            text-align:center;
+          }
+
+          .icon{
+            font-size:54px;
+            margin-bottom:10px;
+          }
+
+          h1{
+            margin:0 0 16px;
+            color:#08339b;
+            font-size:25px;
+          }
+
+          .version-box{
+            background:#f5f8ff;
+            border:1px solid #d8e4ff;
+            border-radius:18px;
+            padding:18px;
+            margin:20px 0;
+            line-height:2;
+            font-size:18px;
+          }
+
+          .current{
+            color:#555;
+          }
+
+          .next{
+            color:#087c3d;
+            font-weight:700;
+            font-size:22px;
+          }
+
+          .warning{
+            color:#666;
+            font-size:15px;
+            line-height:1.9;
+            margin-bottom:22px;
+          }
+
+          button{
+            width:100%;
+            border:0;
+            border-radius:16px;
+            padding:16px 18px;
+            background:#08339b;
+            color:white;
+            font-size:19px;
+            font-weight:700;
+            cursor:pointer;
+          }
+
+          button:active{
+            transform:scale(.99);
+          }
+        </style>
+      </head>
+
+      <body>
+
+        <div class="card">
+
+          <div class="icon">🔄</div>
+
+          <h1>
+            سبھی Apps کے لیے نئی Update
+          </h1>
+
+          <div class="version-box">
+
+            <div class="current">
+              موجودہ Version:
+              <strong>
+                V${currentVersion}
+              </strong>
+            </div>
+
+            <div class="next">
+              نیا Version:
+              V${nextVersion}
+            </div>
+
+          </div>
+
+          <div class="warning">
+            نیچے موجود button دبانے کے بعد
+            V${nextVersion}
+            تمام پرانی installed applications
+            کے لیے نئی update بن جائے گی۔
+          </div>
+
+          <form
+            method="POST"
+            action="/api/pwa/global-update?key=${encodeURIComponent(
+              suppliedKey
+            )}"
+          >
+            <button type="submit">
+              ابھی سبھی Apps پر Update جاری کریں
+            </button>
+          </form>
+
+        </div>
+
+      </body>
+      </html>
+      `,
+      {
+        status: 200,
+        headers: {
+          "Content-Type":
+            "text/html; charset=UTF-8",
+          "Cache-Control":
+            "no-store"
+        }
+      }
+    );
+  }
+
+  /*
+    Only POST is allowed to actually
+    release a new version.
+  */
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
+  }
+
+  try {
+
+    const oldVersion =
+      Math.max(
+        0,
+        parseInt(
+          currentVersion,
+          10
+        ) || 0
+      );
+
+    const newVersion =
+      String(
+        oldVersion + 1
+      );
+
+    await env.DB
+      .prepare(
+        `
+        UPDATE pwa_settings
+        SET
+          latest_version = ?,
+          force_update = 1,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+        `
+      )
+      .bind(
+        newVersion
+      )
+      .run();
+
+    return new Response(
+      `
+      <!doctype html>
+      <html lang="ur" dir="rtl">
+      <head>
+        <meta charset="utf-8">
+        <meta
+          name="viewport"
+          content="width=device-width,initial-scale=1"
+        >
+        <title>Update Released</title>
+
+        <style>
+          *{
+            box-sizing:border-box;
+          }
+
+          body{
+            margin:0;
+            padding:20px;
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            background:#eefbf3;
+            font-family:Arial,sans-serif;
+          }
+
+          .card{
+            width:100%;
+            max-width:480px;
+            background:#fff;
+            border-radius:24px;
+            padding:30px 22px;
+            text-align:center;
+            box-shadow:
+              0 14px 40px rgba(0,0,0,.13);
+          }
+
+          .ok{
+            font-size:58px;
+          }
+
+          h1{
+            color:#087c3d;
+            font-size:25px;
+          }
+
+          p{
+            font-size:18px;
+            line-height:2;
+            color:#444;
+          }
+
+          .version{
+            display:inline-block;
+            margin:8px 0;
+            padding:10px 20px;
+            border-radius:999px;
+            background:#e7f8ee;
+            color:#087c3d;
+            font-size:25px;
+            font-weight:700;
+          }
+        </style>
+      </head>
+
+      <body>
+
+        <div class="card">
+
+          <div class="ok">
+            ✅
+          </div>
+
+          <h1>
+            نئی Update جاری ہو گئی
+          </h1>
+
+          <div class="version">
+            V${newVersion}
+          </div>
+
+          <p>
+            اب V${oldVersion}
+            اور اس سے پرانی installed applications
+            کو نئی V${newVersion}
+            update دکھائی جائے گی۔
+          </p>
+
+        </div>
+
+      </body>
+      </html>
+      `,
+      {
+        status: 200,
+        headers: {
+          "Content-Type":
+            "text/html; charset=UTF-8",
+          "Cache-Control":
+            "no-store"
+        }
+      }
+    );
+
+  } catch (error) {
+
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Global PWA update failed.",
+        message:
+          error && error.message
+            ? error.message
+            : String(error)
+      },
+      500
+    );
+  }
+}
 
 /* =========================================================
    AUTOMATIC DAILY INACTIVE CHECK
