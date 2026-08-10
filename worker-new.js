@@ -2390,10 +2390,6 @@ let currentVersion =
 
 async function resolveInitialVersion() {
 
-  if (currentVersion) {
-    return currentVersion;
-  }
-
   try {
 
     const statusResponse =
