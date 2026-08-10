@@ -2410,16 +2410,6 @@ let currentVersion =
 
   try {
 
-    /* Existing installed application */
-    if (savedVersion) {
-
-      currentVersion =
-        String(savedVersion);
-
-      return currentVersion;
-    }
-
-    /* Fresh installation only */
     const statusResponse =
       await fetch(
         "/api/pwa/status?device_id=" +
@@ -2432,12 +2422,45 @@ let currentVersion =
       );
 
     if (!statusResponse.ok) {
-      return "";
+      return savedVersion
+        ? String(savedVersion)
+        : "";
     }
 
     const statusData =
       await statusResponse.json();
 
+    /*
+      DATABASE IS THE FINAL SOURCE OF TRUTH
+
+      If this device already exists in D1,
+      always use its real app_version.
+    */
+    if (
+      statusData &&
+      statusData.success &&
+      statusData.device_found &&
+      statusData.device &&
+      statusData.device.app_version
+    ) {
+
+      currentVersion =
+        String(
+          statusData.device.app_version
+        );
+
+      localStorage.setItem(
+        "imdaderohani_pwa_version",
+        currentVersion
+      );
+
+      return currentVersion;
+    }
+
+    /*
+      Fresh installation:
+      it belongs to the latest version.
+    */
     if (
       statusData &&
       statusData.success &&
@@ -2462,7 +2485,9 @@ let currentVersion =
       return currentVersion;
     }
 
-    return "";
+    return savedVersion
+      ? String(savedVersion)
+      : "";
 
   } catch (error) {
 
@@ -2471,7 +2496,9 @@ let currentVersion =
       error
     );
 
-    return "";
+    return savedVersion
+      ? String(savedVersion)
+      : "";
   }
 }
 
