@@ -2500,6 +2500,21 @@ async function checkPwaUpdate() {
         return;
       }
 
+/* FINAL GUARD: already updated version must never popup again */
+const installedVersion =
+    localStorage.getItem("imdaderohani_pwa_version") || "";
+
+if (
+    installedVersion &&
+    String(installedVersion) === String(data.latest_version)
+) {
+    localStorage.setItem(
+        "irPwaCompletedUpdateVersion",
+        String(data.latest_version)
+    );
+    return;
+}
+
 const completedUpdateVersion =
   localStorage.getItem(
     "irPwaCompletedUpdateVersion"
