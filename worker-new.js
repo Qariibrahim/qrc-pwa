@@ -1535,11 +1535,14 @@ async function handleVersionCheck(
     const url =
       new URL(request.url);
 
-    const currentVersion =
-      normalizeVersion(
-        url.searchParams.get(
-          "current_version"
-        ) || ""
+    const suppliedVersion =
+      cleanText(
+        url.searchParams.get("current_version")
+      );
+
+    const deviceId =
+      cleanDeviceId(
+        url.searchParams.get("device_id")
       );
 
     const settings =
@@ -1551,21 +1554,130 @@ async function handleVersionCheck(
       );
 
     const forceUpdate =
-      Number(
-        settings.force_update
-      ) === 1;
+      Number(settings.force_update) === 1;
 
-    const versionProvided =
-      Boolean(
-        url.searchParams.get(
-          "current_version"
-        )
-      );
+    /*
+      D1 DEVICE VERSION IS THE FINAL SOURCE OF TRUTH
+    */
+
+    let deviceFound = false;
+    let databaseVersion = "";
+    let currentVersion = "";
+
+    if (deviceId) {
+      const device =
+        await env.DB
+          .prepare(
+            `
+              SELECT app_version
+              FROM pwa_users
+              WHERE device_id = ?
+              LIMIT 1
+            `
+          )
+          .bind(deviceId)
+          .first();
+
+      if (
+        device &&
+        device.app_version
+      ) {
+        deviceFound = true;
+
+        databaseVersion =
+          normalizeVersion(
+            device.app_version
+          );
+
+        currentVersion =
+          databaseVersion;
+      }
+    }
+
+    /*
+      IMPORTANT:
+
+      Existing device:
+      D1 app_version wins.
+
+      Fresh installation:
+      It automatically belongs to latest version.
+      Therefore NO update popup.
+    */
+
+    if (!deviceFound) {
+      currentVersion =
+        suppliedVersion
+          ? normalizeVersion(
+              suppliedVersion
+            )
+          : latestVersion;
+
+      /*
+        A device not yet registered in D1
+        must never receive an update popup
+        during fresh installation.
+      */
+
+      return jsonResponse({
+        success: true,
+
+        current_version:
+          currentVersion,
+
+        latest_version:
+          latestVersion,
+
+        device_found:
+          false,
+
+        database_version:
+          null,
+
+        fresh_installation:
+          true,
+
+        update_available:
+          false,
+
+        force_update:
+          forceUpdate,
+
+        update_required:
+          false,
+
+        show_update_popup:
+          false,
+
+        allow_dismiss:
+          true,
+
+        update_title:
+          "آپ کی ایپ تازہ ترین ہے",
+
+        update_message:
+          "آپ Imdade Rohani App کا تازہ ترین ورژن استعمال کر رہے ہیں۔",
+
+        update_button_text:
+          "ٹھیک ہے",
+
+        update_url:
+          null,
+
+        checked_at:
+          new Date().toISOString()
+      });
+    }
+
+    /*
+      EXISTING DEVICE:
+      Compare its REAL D1 version
+      against latest_version.
+    */
 
     const updateAvailable =
-      versionProvided &&
       currentVersion !==
-        latestVersion;
+      latestVersion;
 
     const updateRequired =
       updateAvailable &&
@@ -1590,32 +1702,32 @@ async function handleVersionCheck(
         ? "ابھی اپڈیٹ کریں"
         : "ٹھیک ہے";
 
-    const showUpdatePopup =
-      updateAvailable;
-
-    const allowDismiss =
-      !updateRequired;
-
     const updateUrl =
-      SITE_ORIGIN +
-      "/?pwa_update=1&version=" +
-      encodeURIComponent(
-        latestVersion
-      );
+      updateAvailable
+        ? SITE_ORIGIN +
+          "/?pwa_update=1&version=" +
+          encodeURIComponent(
+            latestVersion
+          )
+        : null;
 
     return jsonResponse({
       success: true,
 
       current_version:
-        versionProvided
-          ? currentVersion
-          : null,
+        currentVersion,
 
       latest_version:
         latestVersion,
 
-      version_provided:
-        versionProvided,
+      device_found:
+        true,
+
+      database_version:
+        databaseVersion,
+
+      fresh_installation:
+        false,
 
       update_available:
         updateAvailable,
@@ -1627,10 +1739,10 @@ async function handleVersionCheck(
         updateRequired,
 
       show_update_popup:
-        showUpdatePopup,
+        updateAvailable,
 
       allow_dismiss:
-        allowDismiss,
+        !updateRequired,
 
       update_title:
         updateTitle,
@@ -1665,7 +1777,6 @@ async function handleVersionCheck(
     );
   }
 }
-
 
 /* =========================================================
    MANUAL INACTIVE USERS CHECK
