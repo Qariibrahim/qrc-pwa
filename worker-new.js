@@ -1180,6 +1180,9 @@ async function handleActivity(
       body.app_version
     );
 
+const updateConfirmed =
+  body.update_confirmed === true;
+   
   const deviceInfo =
     getDeviceInfo(
       request,
@@ -1314,7 +1317,10 @@ async function handleActivity(
       )
       .run();
 
-    if (versionChanged) {
+    if (
+  versionChanged &&
+  updateConfirmed
+) {
       const countsAfterUpdate =
         await getPwaCounts(env);
 
@@ -2728,13 +2734,14 @@ fetch(
     },
     keepalive: true,
     body: JSON.stringify({
-      device_id: currentDeviceId,
-      app_version: String(
-        data.latest_version
-      ),
-      platform: "Android PWA",
-      browser: "Google Chrome"
-    })
+  device_id: currentDeviceId,
+  app_version: String(
+    data.latest_version
+  ),
+  update_confirmed: true,
+  platform: "Android PWA",
+  browser: "Google Chrome"
+})
   }
 ).catch(error => {
   console.log(
