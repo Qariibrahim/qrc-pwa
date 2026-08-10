@@ -2431,31 +2431,16 @@ async function resolveInitialVersion() {
     let initialVersion = "";
 
     if (
-      statusData &&
-      statusData.success &&
-      statusData.device_found &&
-      statusData.device &&
-      statusData.device.app_version
-    ) {
+  statusData &&
+  statusData.success &&
+  statusData.latest_version
+) {
 
-      /* Existing old user */
-      initialVersion =
-        String(
-          statusData.device.app_version
-        );
-
-    } else if (
-      statusData &&
-      statusData.success &&
+  initialVersion =
+    String(
       statusData.latest_version
-    ) {
-
-      /* Brand-new installation */
-      initialVersion =
-        String(
-          statusData.latest_version
-        );
-    }
+    );
+}
 
     if (initialVersion) {
 
