@@ -966,10 +966,13 @@ async function handleInstall(
     );
   }
 
-  const appVersion =
-    normalizeVersion(
-      body.app_version
-    );
+  const settings =
+  await getPwaSettings(env);
+
+const appVersion =
+  normalizeVersion(
+    settings.latest_version
+  );
 
   const deviceInfo =
     getDeviceInfo(
