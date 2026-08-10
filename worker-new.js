@@ -2362,28 +2362,123 @@ if (!isStandalonePwa) {
   const savedVersion =
   localStorage.getItem(
     "imdaderohani_pwa_version"
-  ) || "1";
+  );
 
 const currentDeviceId =
   localStorage.getItem(
     "irPwaDeviceId"
   ) || "";
 
-const currentVersion =
-  savedVersion;
+let currentVersion =
+  savedVersion || "";
 
-  async function checkPwaUpdate() {
-    try {
-      const response =
-        await fetch(
-          "/api/pwa/version?current_version=" +
-          encodeURIComponent(
-            currentVersion
-          ),
-          {
-            cache: "no-store"
-          }
+
+/* =============================================
+   SAFE INITIAL VERSION RESOLVER
+   New install = latest version
+   Existing user = saved/database version
+   ============================================= */
+
+async function resolveInitialVersion() {
+
+  if (currentVersion) {
+    return currentVersion;
+  }
+
+  try {
+
+    const statusResponse =
+      await fetch(
+        "/api/pwa/status?device_id=" +
+        encodeURIComponent(
+          currentDeviceId
+        ),
+        {
+          cache: "no-store"
+        }
+      );
+
+    if (!statusResponse.ok) {
+      return "";
+    }
+
+    const statusData =
+      await statusResponse.json();
+
+    let initialVersion = "";
+
+    if (
+      statusData &&
+      statusData.success &&
+      statusData.device_found &&
+      statusData.device &&
+      statusData.device.app_version
+    ) {
+
+      /* Existing old user */
+      initialVersion =
+        String(
+          statusData.device.app_version
         );
+
+    } else if (
+      statusData &&
+      statusData.success &&
+      statusData.latest_version
+    ) {
+
+      /* Brand-new installation */
+      initialVersion =
+        String(
+          statusData.latest_version
+        );
+    }
+
+    if (initialVersion) {
+
+      currentVersion =
+        initialVersion;
+
+      localStorage.setItem(
+        "imdaderohani_pwa_version",
+        initialVersion
+      );
+    }
+
+    return currentVersion;
+
+  } catch (error) {
+
+    console.log(
+      "Initial PWA version resolve failed",
+      error
+    );
+
+    return "";
+  }
+}
+
+async function checkPwaUpdate() {
+
+  try {
+
+    const versionToCheck =
+      await resolveInitialVersion();
+
+    if (!versionToCheck) {
+      return;
+    }
+
+    const response =
+      await fetch(
+        "/api/pwa/version?current_version=" +
+        encodeURIComponent(
+          versionToCheck
+        ),
+        {
+          cache: "no-store"
+        }
+      );
 
       if (!response.ok) {
         return;
