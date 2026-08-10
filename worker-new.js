@@ -1227,6 +1227,15 @@ const updateConfirmed =
     null;
 
   if (!existingUser) {
+
+const latestSettings =
+  await getPwaSettings(env);
+
+const initialActivityVersion =
+  normalizeVersion(
+    latestSettings.latest_version
+  );
+     
     await env.DB
       .prepare(
         `
@@ -1253,7 +1262,7 @@ const updateConfirmed =
         deviceId,
         now,
         now,
-        appVersion,
+        initialActivityVersion,
         platform,
         browser,
         now,
