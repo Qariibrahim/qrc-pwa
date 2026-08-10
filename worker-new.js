@@ -1270,10 +1270,19 @@ const updateConfirmed =
         existingUser.status
       ) === "inactive";
 
-    versionChanged =
-      normalizeVersion(
-        existingUser.app_version
-      ) !== appVersion;
+    const storedAppVersion =
+  normalizeVersion(
+    existingUser.app_version
+  );
+
+const effectiveAppVersion =
+  updateConfirmed
+    ? appVersion
+    : storedAppVersion;
+
+versionChanged =
+  storedAppVersion !==
+  effectiveAppVersion;
 
     await env.DB
       .prepare(
@@ -1308,8 +1317,8 @@ const updateConfirmed =
       )
       .bind(
         now,
-        appVersion,
-        appVersion,
+        effectiveAppVersion,
+effectiveAppVersion,
         platform,
         browser,
         now,
