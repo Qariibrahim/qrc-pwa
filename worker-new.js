@@ -2625,15 +2625,19 @@ async function checkPwaUpdate() {
     }
 
     const response =
-      await fetch(
-        "/api/pwa/version?current_version=" +
-        encodeURIComponent(
-          versionToCheck
-        ),
-        {
-          cache: "no-store"
-        }
-      );
+  await fetch(
+    "/api/pwa/version?current_version=" +
+    encodeURIComponent(
+      versionToCheck
+    ) +
+    "&device_id=" +
+    encodeURIComponent(
+      currentDeviceId
+    ),
+    {
+      cache: "no-store"
+    }
+  );
 
       if (!response.ok) {
         return;
