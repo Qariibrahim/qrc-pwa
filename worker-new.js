@@ -2349,10 +2349,11 @@ async function runDailyInactiveCheck(
     const inactiveUsers =
   await getInactiveUsersList(env);
 
-/* TEMP TEST:
-   inactive user 0 ho tab bhi
-   automatic Cron email bhejega.
-*/
+if (
+  inactiveUsers.length === 0
+) {
+  return;
+}
 
     const inactiveUsersList =
       formatInactiveUsersList(
