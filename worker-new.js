@@ -2924,6 +2924,82 @@ const currentDeviceId =
     "irPwaDeviceId"
   ) || "";
 
+/* =============================================
+   PWA ACTIVITY HEARTBEAT
+   Keeps last_active updated automatically
+   ============================================= */
+
+async function sendPwaActivityHeartbeat() {
+
+  if (!currentDeviceId) {
+    return;
+  }
+
+  try {
+
+    await fetch(
+      "/api/pwa/activity",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json"
+        },
+
+        cache: "no-store",
+
+        keepalive: true,
+
+        body: JSON.stringify({
+          device_id: currentDeviceId,
+
+          app_version:
+            localStorage.getItem(
+              "imdaderohani_pwa_version"
+            ) || "",
+
+          platform: "Android PWA",
+
+          browser: "Google Chrome"
+        })
+      }
+    );
+
+  } catch (error) {
+
+    console.log(
+      "PWA activity heartbeat failed",
+      error
+    );
+  }
+}
+
+
+/* App open hote hi activity bheje */
+sendPwaActivityHeartbeat();
+
+
+/* App khula rahe to har 5 minute activity bheje */
+setInterval(
+  sendPwaActivityHeartbeat,
+  5 * 60 * 1000
+);
+
+
+/* Background se app dobara saamne aaye */
+document.addEventListener(
+  "visibilitychange",
+  function () {
+
+    if (
+      document.visibilityState ===
+      "visible"
+    ) {
+      sendPwaActivityHeartbeat();
+    }
+  }
+);
+
 let currentVersion =
   savedVersion || "";
 
