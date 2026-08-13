@@ -662,10 +662,12 @@ async function sendInstallEmail(
     );
 
   const isInactiveReport =
-    eventType ===
-      "Manual Inactive Users Check" ||
-    eventType ===
-      "Daily Inactive Users Report";
+  eventType ===
+    "Manual Inactive Users Check" ||
+  eventType ===
+    "Daily Inactive Users Report" ||
+  eventType ===
+    "Fortnightly PWA Summary";
 
   const emailHeading =
     isInactiveReport
