@@ -2335,60 +2335,112 @@ async function handleGlobalUpdateAdmin(
    AUTOMATIC DAILY INACTIVE CHECK
    ========================================================= */
 
-async function runDailyInactiveCheck(
-  env
-) {
+async function runDailyInactiveCheck(env) {
   if (!env || !env.DB) {
     return;
   }
 
   try {
+
+    /* Har Cron par active/inactive status update hota rahe */
     await markInactiveUsers(env);
 
     const counts =
       await getPwaCounts(env);
 
     const inactiveUsers =
-  await getInactiveUsersList(env);
-
-if (
-  inactiveUsers.length === 0
-) {
-  return;
-}
+      await getInactiveUsersList(env);
 
     const inactiveUsersList =
-      formatInactiveUsersList(
-        inactiveUsers
+      inactiveUsers.length > 0
+        ? formatInactiveUsersList(inactiveUsers)
+        : "Koi inactive user mojood nahi hai.";
+
+    /* 15-day report state table automatic create */
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS pwa_report_state (
+        id INTEGER PRIMARY KEY,
+        last_fortnightly_report_at TEXT
+      )
+    `).run();
+
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO pwa_report_state
+      (id, last_fortnightly_report_at)
+      VALUES (1, NULL)
+    `).run();
+
+    const reportState =
+      await env.DB.prepare(`
+        SELECT last_fortnightly_report_at
+        FROM pwa_report_state
+        WHERE id = 1
+      `).first();
+
+    const lastReport =
+      reportState &&
+      reportState.last_fortnightly_report_at
+        ? new Date(
+            reportState.last_fortnightly_report_at
+          ).getTime()
+        : 0;
+
+    const fifteenDays =
+      15 * 24 * 60 * 60 * 1000;
+
+    const reportDue =
+      !lastReport ||
+      Date.now() - lastReport >= fifteenDays;
+
+    /* Agar 15 din poore nahi hue to email nahi bhejni */
+    if (!reportDue) {
+      return;
+    }
+
+    const emailResult =
+      await sendInstallEmail(
+        env,
+        {
+          device_id:
+            "fortnightly_pwa_summary",
+
+          app_version:
+            counts.latest_version,
+
+          platform:
+            "Cloudflare Worker",
+
+          browser:
+            "Automatic 15-Day Cron Report",
+
+          event_type:
+            "Fortnightly PWA Summary",
+
+          inactive_users_list:
+            inactiveUsersList
+        },
+        counts
       );
 
-    await sendInstallEmail(
-      env,
-      {
-        device_id:
-          "daily_inactive_check",
-
-        app_version:
-          counts.latest_version,
-
-        platform:
-          "Cloudflare Worker",
-
-        browser:
-          "Automatic Daily Cron",
-
-        event_type:
-          "Daily Inactive Users Report",
-
-        inactive_users_list:
-          inactiveUsersList
-      },
-      counts
-    );
+    /* Successful email ke baad hi 15-day clock reset */
+    if (
+      emailResult &&
+      emailResult.success
+    ) {
+      await env.DB.prepare(`
+        UPDATE pwa_report_state
+        SET last_fortnightly_report_at = ?
+        WHERE id = 1
+      `)
+      .bind(
+        new Date().toISOString()
+      )
+      .run();
+    }
 
   } catch (error) {
     console.log(
-      "Daily inactive check failed:",
+      "Fortnightly PWA summary failed:",
       error && error.message
         ? error.message
         : String(error)
