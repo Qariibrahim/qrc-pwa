@@ -72,6 +72,20 @@ export default {
 if (path === "/api/pwa/global-update") {
   return handleGlobalUpdateAdmin(request, env);
 }
+
+/* =============================================
+   DIRECT PWA INSTALL PAGE
+   ============================================= */
+
+if (path === "/install") {
+  return new Response(installPageHtml(), {
+    headers: {
+      "Content-Type": "text/html; charset=UTF-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "X-Content-Type-Options": "nosniff"
+    }
+  });
+}
        
       /* =============================================
          PWA MANIFEST
@@ -3661,6 +3675,257 @@ button{
 </html>`;
 }
 
+/* =========================================================
+   DIRECT PWA INSTALL PAGE
+   ========================================================= */
+
+function installPageHtml() {
+  return `<!doctype html>
+<html lang="ur" dir="rtl">
+<head>
+<meta charset="utf-8">
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+
+<meta name="theme-color" content="#002087">
+
+<link rel="manifest" href="/manifest.webmanifest">
+
+<title>Imdade Rohani App Install</title>
+
+<style>
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  min-height:100vh;
+  padding:20px;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  background:
+    linear-gradient(
+      145deg,
+      #001449,
+      #002087,
+      #1769c2
+    );
+
+  font-family:Arial,sans-serif;
+  text-align:center;
+}
+
+.install-card{
+  width:100%;
+  max-width:420px;
+
+  padding:32px 22px;
+
+  background:#ffffff;
+  border-radius:24px;
+
+  box-shadow:
+    0 18px 55px rgba(0,0,0,.30);
+}
+
+.app-icon{
+  width:100px;
+  height:100px;
+
+  border-radius:22px;
+  object-fit:cover;
+
+  margin-bottom:15px;
+}
+
+h1{
+  margin:5px 0 10px;
+
+  color:#002087;
+  font-size:25px;
+}
+
+p{
+  margin:0 0 24px;
+
+  color:#555;
+  font-size:16px;
+  line-height:1.9;
+}
+
+#installButton{
+  width:100%;
+
+  padding:15px 20px;
+
+  border:0;
+  border-radius:50px;
+
+  background:#002087;
+  color:#ffffff;
+
+  font-size:18px;
+  font-weight:bold;
+
+  cursor:pointer;
+}
+
+#installButton:disabled{
+  opacity:.65;
+}
+
+#installStatus{
+  min-height:24px;
+  margin-top:16px;
+
+  color:#555;
+  font-size:14px;
+  line-height:1.7;
+}
+</style>
+</head>
+
+<body>
+
+<div class="install-card">
+
+  <img
+    class="app-icon"
+    src="/pwa-icon-192.png"
+    alt="Imdade Rohani"
+  >
+
+  <h1>
+    Imdade Rohani App
+  </h1>
+
+  <p>
+    App ko apne mobile mein install karne ke liye
+    neeche diye gaye button ko dabayen.
+  </p>
+
+  <button
+    id="installButton"
+    type="button"
+  >
+    INSTALL APP
+  </button>
+
+  <div id="installStatus">
+    Install option tayyar ho raha hai...
+  </div>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var deferredPrompt = null;
+
+  var button =
+    document.getElementById("installButton");
+
+  var status =
+    document.getElementById("installStatus");
+
+  function isStandalone() {
+    return (
+      window.matchMedia(
+        "(display-mode: standalone)"
+      ).matches ||
+      window.navigator.standalone === true
+    );
+  }
+
+  if (isStandalone()) {
+    button.disabled = true;
+    button.textContent = "APP INSTALLED";
+    status.textContent =
+      "Imdade Rohani App pehle se install hai.";
+    return;
+  }
+
+  window.addEventListener(
+    "beforeinstallprompt",
+    function (event) {
+
+      event.preventDefault();
+
+      deferredPrompt = event;
+
+      status.textContent =
+        "App install karne ke liye button dabayen.";
+    }
+  );
+
+  button.addEventListener(
+    "click",
+    async function () {
+
+      if (!deferredPrompt) {
+        status.textContent =
+          "Install option abhi tayyar nahi hai. Chrome mein is page ko khol kar chand second intezar karein.";
+        return;
+      }
+
+      button.disabled = true;
+
+      try {
+
+        deferredPrompt.prompt();
+
+        var choice =
+          await deferredPrompt.userChoice;
+
+        deferredPrompt = null;
+
+        if (choice.outcome === "accepted") {
+          status.textContent =
+            "Installation shuru ho gayi hai.";
+        } else {
+          status.textContent =
+            "Installation cancel kar di gayi.";
+          button.disabled = false;
+        }
+
+      } catch (error) {
+
+        button.disabled = false;
+
+        status.textContent =
+          "Install nahi ho saka. Dobarah koshish karein.";
+      }
+    }
+  );
+
+  window.addEventListener(
+    "appinstalled",
+    function () {
+
+      deferredPrompt = null;
+
+      button.disabled = true;
+      button.textContent = "APP INSTALLED";
+
+      status.textContent =
+        "Imdade Rohani App kamyabi se install ho gaya.";
+    }
+  );
+
+})();
+</script>
+
+</body>
+</html>`;
+}
 
 /* =========================================================
    BLOGGER PROXY
