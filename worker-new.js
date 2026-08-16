@@ -5140,7 +5140,21 @@ async function proxyBlogger(
         }
       );
 
-    return response;
+    if (response.status === 404) {
+  return new Response(
+    custom404Html(),
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=UTF-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "X-Content-Type-Options": "nosniff"
+      }
+    }
+  );
+}
+
+return response;
 
   } catch (error) {
     return Response.redirect(
