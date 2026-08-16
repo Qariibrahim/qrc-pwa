@@ -3928,6 +3928,1186 @@ p{
 }
 
 /* =========================================================
+   IMDADE ROHANI PROFESSIONAL CUSTOM 404 PAGE
+   ========================================================= */
+
+function custom404Html() {
+  return `<!doctype html>
+<html lang="ur" dir="rtl">
+<head>
+<meta charset="utf-8">
+
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+>
+
+<meta name="theme-color" content="#00143d">
+
+<title>404 | صفحہ نہیں ملا | Imdade Rohani</title>
+
+<style>
+
+*{
+  box-sizing:border-box;
+}
+
+html{
+  scroll-behavior:smooth;
+}
+
+body{
+  margin:0;
+  min-height:100vh;
+
+  background:
+    radial-gradient(
+      circle at 50% 25%,
+      #0b3470 0,
+      #031c4a 30%,
+      #001431 65%,
+      #000b1e 100%
+    );
+
+  color:#ffffff;
+  font-family:
+    Arial,
+    "Noto Nastaliq Urdu",
+    sans-serif;
+
+  overflow-x:hidden;
+}
+
+
+/* =========================
+   MAIN PAGE
+   ========================= */
+
+.page{
+  width:100%;
+  min-height:100vh;
+
+  padding:
+    18px
+    16px
+    34px;
+
+  position:relative;
+}
+
+
+/* =========================
+   STARS
+   ========================= */
+
+.page::before{
+  content:"";
+
+  position:fixed;
+  inset:0;
+
+  pointer-events:none;
+
+  background-image:
+    radial-gradient(#fff 1px,transparent 1px),
+    radial-gradient(#f9c85e 1px,transparent 1px);
+
+  background-size:
+    85px 85px,
+    145px 145px;
+
+  background-position:
+    0 0,
+    35px 45px;
+
+  opacity:.28;
+}
+
+
+/* =========================
+   HEADER
+   ========================= */
+
+.header{
+  width:100%;
+  max-width:900px;
+
+  margin:0 auto 30px;
+
+  padding:13px 15px;
+
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+
+  direction:ltr;
+
+  border:
+    1px solid
+    rgba(255,190,55,.28);
+
+  border-radius:18px;
+
+  background:
+    rgba(0,20,55,.70);
+
+  box-shadow:
+    0 12px 35px
+    rgba(0,0,0,.25);
+
+  backdrop-filter:
+    blur(10px);
+}
+
+
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+
+  min-width:0;
+}
+
+
+.brand-logo{
+  width:62px;
+  height:62px;
+
+  min-width:62px;
+
+  border-radius:50%;
+
+  padding:7px;
+
+  object-fit:contain;
+
+  background:
+    linear-gradient(
+      145deg,
+      #ffe49a,
+      #d99a18
+    );
+
+  border:
+    2px solid
+    #e7ae31;
+
+  box-shadow:
+    0 0 18px
+    rgba(255,188,49,.28);
+}
+
+
+.brand-text{
+  text-align:left;
+}
+
+
+.brand-name{
+  display:block;
+
+  color:#ffffff;
+
+  font-family:Georgia,serif;
+
+  font-size:24px;
+  font-weight:700;
+
+  line-height:1.1;
+}
+
+
+.brand-subtitle{
+  display:block;
+
+  margin-top:5px;
+
+  color:#efb83d;
+
+  font-size:12px;
+}
+
+
+.header-actions{
+  display:flex;
+  gap:8px;
+}
+
+
+.header-btn{
+  width:65px;
+  height:65px;
+
+  border-radius:14px;
+
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+
+  gap:4px;
+
+  text-decoration:none;
+
+  border:
+    1px solid
+    rgba(255,190,55,.28);
+
+  background:
+    rgba(5,31,69,.88);
+
+  color:#fff;
+
+  font-size:11px;
+}
+
+
+.header-icon{
+  font-size:25px;
+  line-height:1;
+}
+
+
+/* =========================
+   404 HERO
+   ========================= */
+
+.hero{
+  width:100%;
+  max-width:850px;
+
+  margin:auto;
+
+  text-align:center;
+
+  position:relative;
+}
+
+
+.error-code{
+  margin-top:10px;
+
+  font-family:
+    Georgia,
+    "Times New Roman",
+    serif;
+
+  font-size:
+    clamp(
+      125px,
+      35vw,
+      280px
+    );
+
+  line-height:.9;
+
+  font-weight:700;
+
+  color:#f4f7ff;
+
+  text-shadow:
+    0 0 12px
+      rgba(255,255,255,.45),
+    0 0 34px
+      rgba(46,122,255,.45);
+}
+
+
+.error-title{
+  margin:
+    15px 0 5px;
+
+  color:#f2ad35;
+
+  font-size:
+    clamp(
+      28px,
+      8vw,
+      48px
+    );
+
+  font-weight:700;
+
+  line-height:1.8;
+}
+
+
+.gold-divider{
+  width:220px;
+  max-width:70%;
+
+  height:1px;
+
+  margin:
+    8px auto 22px;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      #d9a42d,
+      transparent
+    );
+}
+
+
+.error-text{
+  max-width:680px;
+
+  margin:
+    0 auto;
+
+  color:#f5f7fb;
+
+  font-size:
+    clamp(
+      17px,
+      4.5vw,
+      23px
+    );
+
+  line-height:2.2;
+}
+
+
+/* =========================
+   SCENE
+   ========================= */
+
+.scene{
+  width:100%;
+  max-width:850px;
+
+  height:380px;
+
+  margin:
+    15px auto 25px;
+
+  position:relative;
+
+  overflow:hidden;
+
+  border-radius:
+    0 0 40px 40px;
+}
+
+
+.moon-glow{
+  position:absolute;
+
+  left:50%;
+  bottom:40px;
+
+  width:180px;
+  height:180px;
+
+  transform:
+    translateX(-50%);
+
+  border-radius:
+    50% 50% 12px 12px;
+
+  background:
+    radial-gradient(
+      circle,
+      rgba(255,216,99,.95) 0,
+      rgba(255,178,20,.47) 30%,
+      rgba(255,168,0,.10) 58%,
+      transparent 72%
+    );
+
+  filter:
+    blur(2px);
+
+  box-shadow:
+    0 0 80px
+    rgba(255,175,29,.35);
+}
+
+
+.arch{
+  position:absolute;
+
+  left:50%;
+  bottom:54px;
+
+  width:115px;
+  height:155px;
+
+  transform:
+    translateX(-50%);
+
+  border:
+    4px solid
+    #e6ad36;
+
+  border-radius:
+    60px 60px 8px 8px;
+
+  box-shadow:
+    0 0 35px
+    rgba(238,169,43,.35);
+
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255,218,105,.15),
+      rgba(255,181,35,.4)
+    );
+}
+
+
+.arch::before{
+  content:"";
+
+  position:absolute;
+
+  left:50%;
+  top:28px;
+
+  width:54px;
+  height:94px;
+
+  transform:
+    translateX(-50%);
+
+  border-radius:
+    28px 28px 3px 3px;
+
+  background:
+    linear-gradient(
+      #fff2b7,
+      #ffc33b
+    );
+
+  box-shadow:
+    0 0 35px
+    #ffc84b;
+}
+
+
+.path{
+  position:absolute;
+
+  left:50%;
+  bottom:-65px;
+
+  width:260px;
+  height:220px;
+
+  transform:
+    translateX(-50%)
+    perspective(300px)
+    rotateX(56deg);
+
+  border-radius:50%;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      rgba(255,190,51,.14),
+      #e8ab30,
+      rgba(255,190,51,.14),
+      transparent
+    );
+
+  opacity:.9;
+}
+
+
+.sign{
+  position:absolute;
+
+  left:7%;
+  bottom:87px;
+
+  width:128px;
+  height:95px;
+}
+
+
+.sign::before,
+.sign::after{
+  content:"";
+
+  position:absolute;
+
+  left:0;
+
+  width:128px;
+  height:28px;
+
+  border:
+    1px solid
+    rgba(239,174,47,.45);
+
+  background:
+    linear-gradient(
+      #183255,
+      #091d38
+    );
+
+  clip-path:
+    polygon(
+      0 0,
+      90% 0,
+      100% 50%,
+      90% 100%,
+      0 100%,
+      8% 50%
+    );
+}
+
+
+.sign::before{
+  top:0;
+}
+
+
+.sign::after{
+  top:38px;
+
+  transform:
+    scaleX(-1);
+}
+
+
+.lantern{
+  position:absolute;
+
+  left:22%;
+  bottom:43px;
+
+  font-size:42px;
+
+  filter:
+    drop-shadow(
+      0 0 12px
+      #ffc244
+    );
+}
+
+
+/* =========================
+   ACTION PANEL
+   ========================= */
+
+.action-panel{
+  width:100%;
+  max-width:850px;
+
+  margin:
+    0 auto 18px;
+
+  padding:
+    22px 16px;
+
+  border:
+    1px solid
+    rgba(240,181,54,.30);
+
+  border-radius:20px;
+
+  background:
+    rgba(4,31,69,.78);
+
+  box-shadow:
+    0 15px 38px
+    rgba(0,0,0,.24);
+}
+
+
+.action-heading{
+  margin:
+    0 0 18px;
+
+  text-align:center;
+
+  color:#efb13a;
+
+  font-size:
+    clamp(
+      24px,
+      7vw,
+      35px
+    );
+
+  line-height:1.8;
+}
+
+
+.actions{
+  display:grid;
+
+  grid-template-columns:
+    repeat(2,1fr);
+
+  gap:12px;
+}
+
+
+.action-card{
+  min-height:150px;
+
+  padding:
+    18px 10px;
+
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+
+  text-align:center;
+
+  text-decoration:none;
+
+  color:#fff;
+
+  border:
+    1px solid
+    rgba(82,142,219,.40);
+
+  border-radius:15px;
+
+  background:
+    linear-gradient(
+      145deg,
+      rgba(21,62,111,.85),
+      rgba(4,33,72,.90)
+    );
+}
+
+
+.big-icon{
+  width:64px;
+  height:64px;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  margin-bottom:12px;
+
+  border-radius:50%;
+
+  font-size:34px;
+}
+
+
+.whatsapp-icon{
+  background:
+    linear-gradient(
+      #29d366,
+      #129447
+    );
+
+  box-shadow:
+    0 5px 16px
+    rgba(37,211,102,.25);
+}
+
+
+.home-icon{
+  background:
+    linear-gradient(
+      #1763ac,
+      #07336d
+    );
+}
+
+
+.card-title{
+  font-size:19px;
+  line-height:1.8;
+}
+
+
+.card-sub{
+  color:#d4deee;
+
+  font-size:13px;
+}
+
+
+/* =========================
+   OFFICIAL SITE NOTICE
+   ========================= */
+
+.notice{
+  width:100%;
+  max-width:850px;
+
+  margin:
+    0 auto 28px;
+
+  padding:
+    18px 18px;
+
+  display:flex;
+  align-items:center;
+  gap:16px;
+
+  direction:ltr;
+
+  border:
+    1px solid
+    rgba(240,181,54,.28);
+
+  border-radius:18px;
+
+  background:
+    rgba(4,27,61,.84);
+}
+
+
+.bulb{
+  width:64px;
+  height:64px;
+
+  min-width:64px;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+
+  border:
+    2px solid
+    #e5aa2b;
+
+  border-radius:50%;
+
+  font-size:32px;
+}
+
+
+.notice-text{
+  flex:1;
+
+  direction:rtl;
+
+  text-align:center;
+
+  color:#fff;
+
+  font-size:
+    clamp(
+      15px,
+      4vw,
+      20px
+    );
+
+  line-height:2;
+}
+
+
+.notice-domain{
+  display:block;
+
+  direction:ltr;
+
+  margin-top:7px;
+
+  color:#e9ae35;
+
+  font-size:22px;
+  font-weight:700;
+}
+
+
+/* =========================
+   FLAG DIVIDER
+   ========================= */
+
+.flag-divider{
+  width:100%;
+  max-width:760px;
+
+  margin:
+    10px auto 25px;
+
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:15px;
+}
+
+
+.flag-line{
+  flex:1;
+
+  height:1px;
+
+  background:
+    linear-gradient(
+      90deg,
+      transparent,
+      #dca52f
+    );
+}
+
+
+.flag-line.right{
+  transform:
+    scaleX(-1);
+}
+
+
+.flag-mark{
+  width:76px;
+  height:76px;
+
+  padding:8px;
+
+  object-fit:contain;
+
+  border-radius:50%;
+
+  background:
+    linear-gradient(
+      #ffe29a,
+      #d69a1f
+    );
+
+  border:
+    1px solid
+    #e8b13e;
+}
+
+
+/* =========================
+   FOOTER
+   ========================= */
+
+.footer{
+  width:100%;
+  max-width:850px;
+
+  margin:auto;
+
+  padding:
+    18px 10px 8px;
+
+  text-align:center;
+
+  border-top:
+    1px solid
+    rgba(227,169,47,.20);
+
+  color:#cbd5e5;
+
+  font-size:13px;
+  line-height:1.9;
+}
+
+
+.footer-brand{
+  color:#eab03a;
+}
+
+
+/* =========================
+   MOBILE
+   ========================= */
+
+@media(max-width:600px){
+
+  .page{
+    padding:
+      10px 10px 28px;
+  }
+
+  .header{
+    padding:
+      9px 9px;
+  }
+
+  .brand-logo{
+    width:50px;
+    height:50px;
+
+    min-width:50px;
+  }
+
+  .brand-name{
+    font-size:19px;
+  }
+
+  .brand-subtitle{
+    font-size:9px;
+  }
+
+  .header-btn{
+    width:53px;
+    height:55px;
+
+    font-size:9px;
+  }
+
+  .header-icon{
+    font-size:21px;
+  }
+
+  .scene{
+    height:330px;
+  }
+
+  .actions{
+    gap:8px;
+  }
+
+  .action-card{
+    min-height:140px;
+  }
+
+  .notice{
+    gap:9px;
+
+    padding:
+      15px 10px;
+  }
+
+  .bulb{
+    width:52px;
+    height:52px;
+
+    min-width:52px;
+
+    font-size:26px;
+  }
+
+}
+
+</style>
+</head>
+
+<body>
+
+<div class="page">
+
+
+<!-- HEADER -->
+
+<header class="header">
+
+  <div class="brand">
+
+    <img
+      class="brand-logo"
+      src="/pwa-icon-192.png"
+      alt="Imdade Rohani"
+    >
+
+    <div class="brand-text">
+
+      <span class="brand-name">
+        Imdade Rohani
+      </span>
+
+      <span class="brand-subtitle">
+        Rohani Ilaj aur Online Rehnumai
+      </span>
+
+    </div>
+
+  </div>
+
+  <div class="header-actions">
+
+    <a
+      class="header-btn"
+      href="mailto:Connect@imdaderohani.in"
+      aria-label="Email"
+    >
+      <span class="header-icon">
+        ✉
+      </span>
+
+      <span>
+        Mail
+      </span>
+    </a>
+
+    <a
+      class="header-btn"
+      href="https://wa.me/918207311073"
+      aria-label="WhatsApp"
+    >
+      <span class="header-icon">
+        ☎
+      </span>
+
+      <span>
+        WhatsApp
+      </span>
+    </a>
+
+  </div>
+
+</header>
+
+<!-- HERO -->
+
+<main class="hero">
+
+  <div class="error-code">
+    404
+  </div>
+
+  <div class="error-title">
+    صفحہ نہیں ملا
+  </div>
+
+  <div class="gold-divider"></div>
+
+  <div class="error-text">
+    آپ جس صفحے کو تلاش کر رہے ہیں
+    وہ موجود نہیں ہے
+    <br>
+    یا اسے منتقل کر دیا گیا ہے۔
+  </div>
+
+
+  <div class="scene">
+
+    <div class="sign"></div>
+
+    <div class="lantern">
+      🏮
+    </div>
+
+    <div class="moon-glow"></div>
+
+    <div class="arch"></div>
+
+    <div class="path"></div>
+
+  </div>
+
+</main>
+
+
+<!-- ACTIONS -->
+
+<section class="action-panel">
+
+  <h2 class="action-heading">
+    آپ کیا چاہتے ہیں؟
+  </h2>
+
+  <div class="actions">
+
+
+    <a
+      class="action-card"
+      href="https://wa.me/919356236900"
+    >
+
+      <div class="big-icon whatsapp-icon">
+        ☎
+      </div>
+
+      <div class="card-title">
+        ہم سے رابطہ کریں
+      </div>
+
+      <div class="card-sub">
+        WhatsApp پر بات کریں
+      </div>
+
+    </a>
+
+
+    <a
+      class="action-card"
+      href="https://qrc.imdaderohani.in/"
+    >
+
+      <div class="big-icon home-icon">
+        🏠
+      </div>
+
+      <div class="card-title">
+        ہوم پیج پر جائیں
+      </div>
+
+      <div class="card-sub">
+        ہوم پیج دیکھیں
+      </div>
+
+    </a>
+
+  </div>
+
+</section>
+
+
+<!-- NOTICE -->
+
+<section class="notice">
+
+  <div class="bulb">
+    💡
+  </div>
+
+  <div class="notice-text">
+
+    ImdadeRohani کی مین آفیشل ویب سائٹ
+    تکنیکی خرابی کے سبب
+    ابھی بند چل رہی ہے۔
+
+    <span class="notice-domain">
+      imdaderohani.in
+    </span>
+
+  </div>
+
+</section>
+
+
+<!-- FLAG DIVIDER -->
+
+<div class="flag-divider">
+
+  <div class="flag-line"></div>
+
+  <img
+    class="flag-mark"
+    src="/pwa-icon-192.png"
+    alt="Imdade Rohani"
+  >
+
+  <div class="flag-line right"></div>
+
+</div>
+
+
+<!-- FOOTER -->
+
+<footer class="footer">
+
+  © 2026
+  <span class="footer-brand">
+    Imdade Rohani
+  </span>
+
+  — All Rights Reserved.
+
+  <br>
+
+  Rohani Ilaj aur Online Rehnumai
+
+</footer>
+
+
+</div>
+
+</body>
+</html>`;
+}
+
+/* =========================================================
    BLOGGER PROXY
    ========================================================= */
 
@@ -3969,7 +5149,6 @@ async function proxyBlogger(
     );
   }
 }
-
 
 /* =========================================================
    CODE NO. PWA-TRACK-4006 — PART 5 END
