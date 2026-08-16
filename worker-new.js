@@ -20,6 +20,21 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
+        /* ==========================================
+           PROFESSIONAL CUSTOM 404 PAGE ROUTE
+           ========================================== */
+
+        if (path === "/404" || path === "/404/") {
+          return new Response(custom404Html(), {
+            status: 404,
+            headers: {
+              "Content-Type": "text/html; charset=UTF-8",
+              "Cache-Control": "no-store, no-cache, must-revalidate",
+              "X-Content-Type-Options": "nosniff"
+            }
+          });
+        }
+       
       /* CORS Preflight */
       if (request.method === "OPTIONS") {
         return new Response(null, {
