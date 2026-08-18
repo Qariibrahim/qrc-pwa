@@ -2855,9 +2855,11 @@ if (!linkText) {
 
                   message:
                     message,
+ url:
+  url,
 
-                  url:
-                    url
+link_text:
+  linkText
                 })
             }
           );
