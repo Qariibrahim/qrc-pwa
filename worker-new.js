@@ -1833,6 +1833,12 @@ async function handlePushBroadcast(
       SITE_ORIGIN
     );
 
+const linkText =
+  cleanText(
+    url.searchParams.get("link_text"),
+    "Abhi Dekhein"
+  ).slice(0, 40);
+   
   const rows =
     await env.DB.prepare(
       `
@@ -1940,11 +1946,14 @@ async function handlePushBroadcast(
                         SITE_ORIGIN +
                         "/pwa-icon-192.png",
 
-                      tag:
-                        "imdade-rohani-broadcast",
+                     tag:
+  "imdade-rohani-broadcast",
 
-                      url:
-                        targetUrl
+url:
+  targetUrl,
+
+action_text:
+  linkText
 
                     },
 
