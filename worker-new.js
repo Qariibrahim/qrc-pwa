@@ -1923,13 +1923,6 @@ const linkText =
                         pushUser.token
                       ),
 
-                    notification: {
-                      title:
-                        title,
-                      body:
-                        message
-                    },
-
                     data: {
 
                       title:
