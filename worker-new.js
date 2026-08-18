@@ -79,6 +79,18 @@ if (path === "/api/push/broadcast") {
 /* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 5 ROUTE END
    ========================================================= */
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 6 ADMIN PAGE ROUTE
+   ========================================================= */
+
+if (path === "/api/push/admin") {
+  return handlePushAdminPage(request, env);
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 6 ROUTE END
+   ========================================================= */
        
 /* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 3B ROUTE END
