@@ -57,6 +57,18 @@ if (path === "/api/push/register") {
 }
 
 /* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 4 TEST SEND ROUTE
+   ========================================================= */
+
+if (path === "/api/push/test-send") {
+  return handlePushTestSend(request, env);
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 4 ROUTE END
+   ========================================================= */
+       
+/* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 3B ROUTE END
    ========================================================= */
        
@@ -1147,6 +1159,569 @@ async function handlePushRegister(
 
 /* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 3B END
+   ========================================================= */
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 4
+   FIREBASE FCM TEST PUSH SENDER
+   ========================================================= */
+
+function irBase64Url(input) {
+
+  const bytes =
+    input instanceof Uint8Array
+      ? input
+      : new TextEncoder().encode(
+          String(input)
+        );
+
+  let binary = "";
+
+  for (
+    let i = 0;
+    i < bytes.length;
+    i++
+  ) {
+    binary +=
+      String.fromCharCode(
+        bytes[i]
+      );
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+
+function irPemToArrayBuffer(pem) {
+
+  const normalized =
+    String(pem || "")
+      .replace(/\\n/g, "\n")
+      .trim();
+
+  const base64 =
+    normalized
+      .replace(
+        /-----BEGIN PRIVATE KEY-----/g,
+        ""
+      )
+      .replace(
+        /-----END PRIVATE KEY-----/g,
+        ""
+      )
+      .replace(/\s+/g, "");
+
+  const binary =
+    atob(base64);
+
+  const bytes =
+    new Uint8Array(
+      binary.length
+    );
+
+  for (
+    let i = 0;
+    i < binary.length;
+    i++
+  ) {
+    bytes[i] =
+      binary.charCodeAt(i);
+  }
+
+  return bytes.buffer;
+}
+
+
+async function getFirebaseAccessToken(
+  env
+) {
+
+  if (
+    !env.FIREBASE_PROJECT_ID ||
+    !env.FIREBASE_CLIENT_EMAIL ||
+    !env.FIREBASE_PRIVATE_KEY
+  ) {
+    throw new Error(
+      "Firebase secrets missing."
+    );
+  }
+
+
+  const now =
+    Math.floor(
+      Date.now() / 1000
+    );
+
+
+  const header = {
+    alg: "RS256",
+    typ: "JWT"
+  };
+
+
+  const claims = {
+
+    iss:
+      String(
+        env.FIREBASE_CLIENT_EMAIL
+      ),
+
+    scope:
+      "https://www.googleapis.com/auth/firebase.messaging",
+
+    aud:
+      "https://oauth2.googleapis.com/token",
+
+    iat:
+      now,
+
+    exp:
+      now + 3600
+
+  };
+
+
+  const encodedHeader =
+    irBase64Url(
+      JSON.stringify(header)
+    );
+
+  const encodedClaims =
+    irBase64Url(
+      JSON.stringify(claims)
+    );
+
+
+  const signingInput =
+    encodedHeader +
+    "." +
+    encodedClaims;
+
+
+  const privateKey =
+    await crypto.subtle.importKey(
+
+      "pkcs8",
+
+      irPemToArrayBuffer(
+        env.FIREBASE_PRIVATE_KEY
+      ),
+
+      {
+        name:
+          "RSASSA-PKCS1-v1_5",
+
+        hash:
+          "SHA-256"
+      },
+
+      false,
+
+      ["sign"]
+
+    );
+
+
+  const signature =
+    await crypto.subtle.sign(
+
+      {
+        name:
+          "RSASSA-PKCS1-v1_5"
+      },
+
+      privateKey,
+
+      new TextEncoder().encode(
+        signingInput
+      )
+
+    );
+
+
+  const assertion =
+    signingInput +
+    "." +
+    irBase64Url(
+      new Uint8Array(signature)
+    );
+
+
+  const form =
+    new URLSearchParams();
+
+  form.set(
+    "grant_type",
+    "urn:ietf:params:oauth:grant-type:jwt-bearer"
+  );
+
+  form.set(
+    "assertion",
+    assertion
+  );
+
+
+  const response =
+    await fetch(
+      "https://oauth2.googleapis.com/token",
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type":
+            "application/x-www-form-urlencoded"
+        },
+
+        body:
+          form.toString()
+      }
+    );
+
+
+  const text =
+    await response.text();
+
+
+  if (!response.ok) {
+    throw new Error(
+      "Google OAuth failed: " +
+      response.status +
+      " " +
+      text
+    );
+  }
+
+
+  const data =
+    JSON.parse(text);
+
+
+  if (!data.access_token) {
+    throw new Error(
+      "Google access token missing."
+    );
+  }
+
+
+  return data.access_token;
+}
+
+
+/* =========================================================
+   SEND TEST PUSH TO LATEST ACTIVE TOKEN
+   ========================================================= */
+
+async function handlePushTestSend(
+  request,
+  env
+) {
+
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+
+  if (!env.PWA_ADMIN_KEY) {
+
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "PWA_ADMIN_KEY secret is missing."
+      },
+      500
+    );
+
+  }
+
+
+  const url =
+    new URL(request.url);
+
+
+  const suppliedKey =
+    cleanText(
+      url.searchParams.get("key")
+    );
+
+
+  if (
+    !suppliedKey ||
+    suppliedKey !==
+      String(env.PWA_ADMIN_KEY)
+  ) {
+
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Unauthorized push test."
+      },
+      401
+    );
+
+  }
+
+
+  if (
+    !env.FIREBASE_PROJECT_ID ||
+    !env.FIREBASE_CLIENT_EMAIL ||
+    !env.FIREBASE_PRIVATE_KEY
+  ) {
+
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Firebase secrets are missing."
+      },
+      500
+    );
+
+  }
+
+
+  const pushUser =
+    await env.DB.prepare(
+      `
+        SELECT
+          token,
+          device_id,
+          platform,
+          browser
+        FROM push_tokens
+        WHERE status = 'active'
+        ORDER BY updated_at DESC
+        LIMIT 1
+      `
+    ).first();
+
+
+  if (
+    !pushUser ||
+    !pushUser.token
+  ) {
+
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "No active push token found."
+      },
+      404
+    );
+
+  }
+
+
+  try {
+
+    const accessToken =
+      await getFirebaseAccessToken(
+        env
+      );
+
+
+    const title =
+      "Imdade Rohani";
+
+
+    const message =
+      "Alhamdulillah! Test Push Notification successfully bheji gayi hai.";
+
+
+    const fcmPayload = {
+
+      message: {
+
+        token:
+          String(
+            pushUser.token
+          ),
+
+        notification: {
+
+          title:
+            title,
+
+          body:
+            message
+
+        },
+
+        data: {
+
+          title:
+            title,
+
+          body:
+            message,
+
+          icon:
+            SITE_ORIGIN +
+            "/pwa-icon-192.png",
+
+          badge:
+            SITE_ORIGIN +
+            "/pwa-icon-192.png",
+
+          tag:
+            "imdade-rohani-test",
+
+          url:
+            SITE_ORIGIN
+
+        },
+
+        webpush: {
+
+          headers: {
+            Urgency: "high"
+          },
+
+          fcm_options: {
+            link:
+              SITE_ORIGIN
+          }
+
+        }
+
+      }
+
+    };
+
+
+    const fcmResponse =
+      await fetch(
+
+        "https://fcm.googleapis.com/v1/projects/" +
+        encodeURIComponent(
+          String(
+            env.FIREBASE_PROJECT_ID
+          )
+        ) +
+        "/messages:send",
+
+        {
+          method: "POST",
+
+          headers: {
+
+            "Authorization":
+              "Bearer " +
+              accessToken,
+
+            "Content-Type":
+              "application/json"
+
+          },
+
+          body:
+            JSON.stringify(
+              fcmPayload
+            )
+
+        }
+
+      );
+
+
+    const fcmText =
+      await fcmResponse.text();
+
+
+    let fcmResult = null;
+
+    try {
+      fcmResult =
+        JSON.parse(fcmText);
+    } catch (error) {
+      fcmResult =
+        fcmText;
+    }
+
+
+    if (!fcmResponse.ok) {
+
+      return jsonResponse(
+        {
+          success: false,
+
+          error:
+            "FCM send failed.",
+
+          status:
+            fcmResponse.status,
+
+          firebase:
+            fcmResult
+        },
+        fcmResponse.status
+      );
+
+    }
+
+
+    return jsonResponse({
+
+      success: true,
+
+      event:
+        "test_push_sent",
+
+      device_id:
+        pushUser.device_id ||
+        null,
+
+      platform:
+        pushUser.platform ||
+        null,
+
+      browser:
+        pushUser.browser ||
+        null,
+
+      firebase:
+        fcmResult,
+
+      sent_at:
+        new Date().toISOString()
+
+    });
+
+
+  } catch (error) {
+
+    return jsonResponse(
+      {
+        success: false,
+
+        error:
+          "Push test failed.",
+
+        message:
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+      },
+      500
+    );
+
+  }
+
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 4 END
    ========================================================= */
 
 /* =========================================================
