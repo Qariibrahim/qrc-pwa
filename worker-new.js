@@ -2279,6 +2279,12 @@ async function handlePushAdminPage(
         SITE_ORIGIN
       );
 
+const linkText =
+  cleanText(
+    body.link_text,
+    "Abhi Dekhein"
+  ).slice(0, 40);
+     
     /*
      * Existing Part 5 Broadcast function
      * ko andar hi andar istemal karenge.
@@ -2313,6 +2319,11 @@ async function handlePushAdminPage(
       targetUrl
     );
 
+internalUrl.searchParams.set(
+  "link_text",
+  linkText
+);
+     
     const internalRequest =
       new Request(
         internalUrl.toString(),
