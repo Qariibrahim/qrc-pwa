@@ -1955,12 +1955,7 @@ action_text:
                       headers: {
                         Urgency: "high"
                       },
-
-                      fcm_options: {
-                        link:
-                          targetUrl
-                      }
-
+                       
                     }
 
                   }
