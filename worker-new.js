@@ -2213,6 +2213,755 @@ async function handlePushBroadcast(
    ========================================================= */
 
 /* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 6
+   PROFESSIONAL PUSH NOTIFICATION ADMIN PAGE
+   ========================================================= */
+
+async function handlePushAdminPage(
+  request,
+  env
+) {
+
+  /*
+   * ---------------------------------------------------------
+   * POST = Admin page se notification bhejna
+   * ---------------------------------------------------------
+   */
+  if (request.method === "POST") {
+
+    if (!env.PWA_ADMIN_KEY) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            "PWA_ADMIN_KEY secret is missing."
+        },
+        500
+      );
+    }
+
+    const body =
+      await readJsonBody(request);
+
+    const adminKey =
+      cleanText(body.key);
+
+    if (
+      !adminKey ||
+      adminKey !==
+        String(env.PWA_ADMIN_KEY)
+    ) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            "Admin Key ghalat hai."
+        },
+        401
+      );
+    }
+
+    const title =
+      cleanText(
+        body.title,
+        "Imdade Rohani"
+      ).slice(0, 120);
+
+    const message =
+      cleanText(
+        body.message,
+        "Imdade Rohani se nayi maloomat mojood hai."
+      ).slice(0, 500);
+
+    const targetUrl =
+      cleanText(
+        body.url,
+        SITE_ORIGIN
+      );
+
+    /*
+     * Existing Part 5 Broadcast function
+     * ko andar hi andar istemal karenge.
+     *
+     * Admin key browser address bar mein
+     * show nahi hogi.
+     */
+
+    const internalUrl =
+      new URL(
+        SITE_ORIGIN +
+        "/api/push/broadcast"
+      );
+
+    internalUrl.searchParams.set(
+      "key",
+      adminKey
+    );
+
+    internalUrl.searchParams.set(
+      "title",
+      title
+    );
+
+    internalUrl.searchParams.set(
+      "body",
+      message
+    );
+
+    internalUrl.searchParams.set(
+      "url",
+      targetUrl
+    );
+
+    const internalRequest =
+      new Request(
+        internalUrl.toString(),
+        {
+          method: "GET",
+          headers:
+            request.headers
+        }
+      );
+
+    return handlePushBroadcast(
+      internalRequest,
+      env
+    );
+  }
+
+
+  /*
+   * ---------------------------------------------------------
+   * Sirf GET se Admin Page khulega
+   * ---------------------------------------------------------
+   */
+  if (request.method !== "GET") {
+    return methodNotAllowed(
+      "GET, POST"
+    );
+  }
+
+
+  const html = `<!DOCTYPE html>
+<html lang="ur" dir="rtl">
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1"
+/>
+
+<title>
+Imdade Rohani Push Notification
+</title>
+
+<style>
+
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  padding:20px;
+  min-height:100vh;
+  background:
+    linear-gradient(
+      160deg,
+      #001b4d,
+      #003983,
+      #061b44
+    );
+  font-family:
+    Arial,
+    sans-serif;
+  color:#172033;
+}
+
+.admin-wrap{
+  width:100%;
+  max-width:650px;
+  margin:auto;
+}
+
+.brand{
+  text-align:center;
+  color:#fff;
+  margin-bottom:20px;
+}
+
+.logo{
+  width:90px;
+  height:90px;
+  border-radius:50%;
+  object-fit:cover;
+  border:3px solid #dba62f;
+  background:#fff;
+  box-shadow:
+    0 8px 25px
+    rgba(0,0,0,.25);
+}
+
+.brand h1{
+  margin:
+    12px 0 5px;
+  font-size:27px;
+}
+
+.brand p{
+  margin:0;
+  color:#dfeaff;
+  font-size:14px;
+}
+
+.card{
+  background:#fff;
+  border-radius:24px;
+  padding:22px;
+  box-shadow:
+    0 15px 45px
+    rgba(0,0,0,.28);
+}
+
+.heading{
+  text-align:center;
+  color:#002087;
+  font-size:23px;
+  font-weight:800;
+  margin-bottom:22px;
+}
+
+.field{
+  margin-bottom:17px;
+}
+
+label{
+  display:block;
+  font-weight:700;
+  margin-bottom:7px;
+  color:#24324b;
+}
+
+input,
+textarea{
+  width:100%;
+  border:
+    1px solid #ccd5e5;
+  border-radius:12px;
+  padding:13px 14px;
+  font-size:15px;
+  outline:none;
+  background:#f9fbff;
+}
+
+input:focus,
+textarea:focus{
+  border-color:#002087;
+  box-shadow:
+    0 0 0 3px
+    rgba(0,32,135,.10);
+}
+
+textarea{
+  min-height:130px;
+  resize:vertical;
+}
+
+.send-btn{
+  width:100%;
+  border:0;
+  border-radius:14px;
+  padding:15px;
+  background:#002087;
+  color:white;
+  font-size:17px;
+  font-weight:800;
+  cursor:pointer;
+  margin-top:5px;
+}
+
+.send-btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
+.note{
+  margin-top:15px;
+  font-size:13px;
+  color:#667085;
+  text-align:center;
+  line-height:1.7;
+}
+
+.result{
+  display:none;
+  margin-top:18px;
+  padding:15px;
+  border-radius:14px;
+  font-size:14px;
+  line-height:1.8;
+  white-space:pre-wrap;
+  word-break:break-word;
+}
+
+.result.success{
+  display:block;
+  background:#ecfdf3;
+  border:
+    1px solid #86efac;
+  color:#166534;
+}
+
+.result.error{
+  display:block;
+  background:#fff1f2;
+  border:
+    1px solid #fda4af;
+  color:#9f1239;
+}
+
+.counter{
+  font-size:12px;
+  color:#667085;
+  margin-top:5px;
+  text-align:left;
+  direction:ltr;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="admin-wrap">
+
+  <div class="brand">
+
+    <img
+      class="logo"
+      src="${LOGO_URL}"
+      alt="Imdade Rohani"
+    />
+
+    <h1>
+      Imdade Rohani
+    </h1>
+
+    <p>
+      Push Notification Admin Panel
+    </p>
+
+  </div>
+
+
+  <div class="card">
+
+    <div class="heading">
+      🔔 Notification Bhejein
+    </div>
+
+
+    <div class="field">
+
+      <label>
+        🔐 Admin Key
+      </label>
+
+      <input
+        id="adminKey"
+        type="password"
+        autocomplete="off"
+        placeholder="Apni PWA Admin Key likhein"
+      />
+
+    </div>
+
+
+    <div class="field">
+
+      <label>
+        📝 Notification Title
+      </label>
+
+      <input
+        id="pushTitle"
+        maxlength="120"
+        value="Imdade Rohani"
+        placeholder="Notification ka title"
+      />
+
+    </div>
+
+
+    <div class="field">
+
+      <label>
+        💬 Message
+      </label>
+
+      <textarea
+        id="pushMessage"
+        maxlength="500"
+        placeholder="Yahan notification message likhein"
+      ></textarea>
+
+      <div
+        class="counter"
+        id="counter"
+      >
+        0 / 500
+      </div>
+
+    </div>
+
+
+    <div class="field">
+
+      <label>
+        🔗 Notification Click Link
+      </label>
+
+      <input
+        id="pushUrl"
+        type="url"
+        value="${SITE_ORIGIN}"
+        placeholder="https://qrc.imdaderohani.in"
+      />
+
+    </div>
+
+
+    <button
+      class="send-btn"
+      id="sendButton"
+      type="button"
+    >
+      📢 SAB USERS KO NOTIFICATION BHEJEIN
+    </button>
+
+
+    <div
+      id="result"
+      class="result"
+    ></div>
+
+
+    <div class="note">
+
+      Notification sirf un users ko bheji jayegi
+      jinhone notification Allow ki hui hai.
+
+    </div>
+
+  </div>
+
+</div>
+
+
+<script>
+
+(function(){
+
+  var adminKey =
+    document.getElementById(
+      "adminKey"
+    );
+
+  var pushTitle =
+    document.getElementById(
+      "pushTitle"
+    );
+
+  var pushMessage =
+    document.getElementById(
+      "pushMessage"
+    );
+
+  var pushUrl =
+    document.getElementById(
+      "pushUrl"
+    );
+
+  var sendButton =
+    document.getElementById(
+      "sendButton"
+    );
+
+  var resultBox =
+    document.getElementById(
+      "result"
+    );
+
+  var counter =
+    document.getElementById(
+      "counter"
+    );
+
+
+  pushMessage.addEventListener(
+    "input",
+    function(){
+
+      counter.textContent =
+        String(
+          pushMessage.value.length
+        ) +
+        " / 500";
+
+    }
+  );
+
+
+  function showResult(
+    type,
+    text
+  ) {
+
+    resultBox.className =
+      "result " + type;
+
+    resultBox.textContent =
+      text;
+
+  }
+
+
+  sendButton.addEventListener(
+    "click",
+    async function(){
+
+      var key =
+        adminKey.value.trim();
+
+      var title =
+        pushTitle.value.trim();
+
+      var message =
+        pushMessage.value.trim();
+
+      var url =
+        pushUrl.value.trim();
+
+
+      if (!key) {
+
+        showResult(
+          "error",
+          "Admin Key likhna zaroori hai."
+        );
+
+        return;
+      }
+
+
+      if (!title) {
+
+        showResult(
+          "error",
+          "Notification Title likhein."
+        );
+
+        return;
+      }
+
+
+      if (!message) {
+
+        showResult(
+          "error",
+          "Notification Message likhein."
+        );
+
+        return;
+      }
+
+
+      if (!url) {
+        url =
+          "${SITE_ORIGIN}";
+      }
+
+
+      var confirmed =
+        window.confirm(
+          "Kya aap ye notification sab active users ko bhejna chahte hain?"
+        );
+
+
+      if (!confirmed) {
+        return;
+      }
+
+
+      sendButton.disabled =
+        true;
+
+      sendButton.textContent =
+        "Notification bheji ja rahi hai...";
+
+      resultBox.className =
+        "result";
+
+
+      try {
+
+        var response =
+          await fetch(
+            "/api/push/admin",
+            {
+              method:
+                "POST",
+
+              headers: {
+                "Content-Type":
+                  "application/json"
+              },
+
+              body:
+                JSON.stringify({
+                  key:
+                    key,
+
+                  title:
+                    title,
+
+                  message:
+                    message,
+
+                  url:
+                    url
+                })
+            }
+          );
+
+
+        var data =
+          await response.json();
+
+
+        if (
+          response.ok &&
+          data.success
+        ) {
+
+          showResult(
+            "success",
+
+            "✅ Notification successfully bhej di gayi.\\n\\n" +
+
+            "Kul Active Tokens: " +
+            String(
+              data.total_active_tokens || 0
+            ) +
+
+            "\\nSuccessfully Sent: " +
+            String(
+              data.successfully_sent || 0
+            ) +
+
+            "\\nFailed: " +
+            String(
+              data.failed || 0
+            ) +
+
+            "\\nInvalid Tokens Band: " +
+            String(
+              data.invalid_tokens_deactivated || 0
+            )
+          );
+
+
+          pushMessage.value =
+            "";
+
+          counter.textContent =
+            "0 / 500";
+
+
+        } else {
+
+          showResult(
+            "error",
+
+            "❌ Notification nahi bheji gayi.\\n\\n" +
+            (
+              data.error ||
+              data.message ||
+              "Unknown error"
+            )
+          );
+
+        }
+
+
+      } catch(error) {
+
+        showResult(
+          "error",
+
+          "❌ Network/Error:\\n" +
+          (
+            error &&
+            error.message
+              ? error.message
+              : String(error)
+          )
+        );
+
+      } finally {
+
+        sendButton.disabled =
+          false;
+
+        sendButton.textContent =
+          "📢 SAB USERS KO NOTIFICATION BHEJEIN";
+
+      }
+
+    }
+  );
+
+})();
+
+</script>
+
+</body>
+</html>`;
+
+
+  return new Response(
+    html,
+    {
+      status: 200,
+
+      headers: {
+
+        "Content-Type":
+          "text/html; charset=UTF-8",
+
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate",
+
+        "X-Content-Type-Options":
+          "nosniff",
+
+        "X-Frame-Options":
+          "DENY"
+
+      }
+    }
+  );
+
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 6 END
+   ========================================================= */
+
+/* =========================================================
    API: NEW INSTALLATION
    POST /api/pwa/install
    ========================================================= */
