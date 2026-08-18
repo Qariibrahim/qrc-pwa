@@ -2699,6 +2699,11 @@ textarea{
       "pushUrl"
     );
 
+var pushLinkText =
+  document.getElementById(
+    "pushLinkText"
+  );
+
   var sendButton =
     document.getElementById(
       "sendButton"
