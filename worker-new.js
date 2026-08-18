@@ -2764,6 +2764,12 @@ var pushLinkText =
       var url =
         pushUrl.value.trim();
 
+var linkText =
+  pushLinkText.value.trim();
+
+if (!linkText) {
+  linkText = "Abhi Dekhein";
+}
 
       if (!key) {
 
