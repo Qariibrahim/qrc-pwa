@@ -978,6 +978,176 @@ async function handleEmailTest(
   });
 }
 
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 3B
+   SAVE FCM TOKEN IN D1
+   ========================================================= */
+
+async function handlePushRegister(
+  request,
+  env
+) {
+
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const body =
+    await readJsonBody(request);
+
+  const token =
+    cleanText(body.token);
+
+  const deviceId =
+    cleanDeviceId(
+      body.device_id
+    );
+
+  if (
+    !token ||
+    token.length < 50
+  ) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Valid FCM token required."
+      },
+      400
+    );
+  }
+
+
+  /*
+    Table pehli baar automatic ban jayegi.
+    Cloudflare D1 mein manually table
+    banane ki zarurat nahi.
+  */
+  await env.DB.prepare(
+    `
+      CREATE TABLE IF NOT EXISTS
+      push_tokens (
+
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+        token TEXT NOT NULL UNIQUE,
+
+        device_id TEXT,
+
+        platform TEXT,
+
+        browser TEXT,
+
+        status TEXT NOT NULL
+          DEFAULT 'active',
+
+        created_at TEXT NOT NULL,
+
+        updated_at TEXT NOT NULL
+
+      )
+    `
+  ).run();
+
+
+  const deviceInfo =
+    getDeviceInfo(
+      request,
+      body
+    );
+
+  const now =
+    new Date().toISOString();
+
+
+  /*
+    Same token dobara aaye to duplicate
+    row nahi banegi. Purani row update hogi.
+  */
+  await env.DB.prepare(
+    `
+      INSERT INTO push_tokens (
+
+        token,
+        device_id,
+        platform,
+        browser,
+        status,
+        created_at,
+        updated_at
+
+      )
+
+      VALUES (
+        ?, ?, ?, ?, 'active', ?, ?
+      )
+
+      ON CONFLICT(token)
+      DO UPDATE SET
+
+        device_id =
+          excluded.device_id,
+
+        platform =
+          excluded.platform,
+
+        browser =
+          excluded.browser,
+
+        status =
+          'active',
+
+        updated_at =
+          excluded.updated_at
+    `
+  )
+  .bind(
+    token,
+    deviceId || null,
+    deviceInfo.platform,
+    deviceInfo.browser,
+    now,
+    now
+  )
+  .run();
+
+
+  const countRow =
+    await env.DB.prepare(
+      `
+        SELECT COUNT(*) AS total
+        FROM push_tokens
+        WHERE status = 'active'
+      `
+    ).first();
+
+
+  return jsonResponse({
+    success: true,
+
+    event:
+      "push_token_registered",
+
+    active_push_users:
+      safeInteger(
+        countRow &&
+        countRow.total,
+        0
+      ),
+
+    registered_at:
+      now
+  });
+
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 3B END
+   ========================================================= */
 
 /* =========================================================
    API: NEW INSTALLATION
