@@ -5015,40 +5015,58 @@ self.addEventListener(
 );
 
 /* =========================================================
-   CODE NO. PUSH-NOTIFICATION-5001 — PART 2
-   PUSH RECEIVE + NOTIFICATION CLICK
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 7
+   CUSTOM TITLE + MESSAGE + ACTION BUTTON
    ========================================================= */
 
 self.addEventListener(
   "push",
   event => {
 
-    let data = {};
+    let payload = {};
 
     try {
-      data = event.data
+      payload = event.data
         ? event.data.json()
         : {};
     } catch (error) {
-
-      data = {
-        title: "Imdade Rohani",
-        body: event.data
-          ? event.data.text()
-          : "Nayi notification mojood hai."
-      };
-
+      payload = {};
     }
+
+    const data =
+      payload.data &&
+      typeof payload.data === "object"
+        ? payload.data
+        : payload;
+
+    const notificationData =
+      payload.notification &&
+      typeof payload.notification === "object"
+        ? payload.notification
+        : {};
 
     const title =
       data.title ||
+      notificationData.title ||
       "Imdade Rohani";
+
+    const body =
+      data.body ||
+      notificationData.body ||
+      "Nayi notification mojood hai.";
+
+    const targetUrl =
+      data.url ||
+      "/";
+
+    const actionText =
+      data.action_text ||
+      "Abhi Dekhein";
 
     const options = {
 
       body:
-        data.body ||
-        "Imdade Rohani se nayi maloomat mojood hai.",
+        body,
 
       icon:
         data.icon ||
@@ -5059,18 +5077,31 @@ self.addEventListener(
         "/pwa-icon-192.png",
 
       image:
-        data.image || undefined,
+        data.image ||
+        undefined,
 
       tag:
         data.tag ||
         "imdaderohani-notification",
 
-      renotify: true,
+      renotify:
+        true,
+
+      requireInteraction:
+        true,
+
+      actions: [
+        {
+          action:
+            "open_link",
+          title:
+            actionText
+        }
+      ],
 
       data: {
         url:
-          data.url ||
-          "/"
+          targetUrl
       }
 
     };
@@ -5086,7 +5117,8 @@ self.addEventListener(
 );
 
 
-/* Notification par click */
+/* Notification ya button par click */
+
 self.addEventListener(
   "notificationclick",
   event => {
@@ -5123,9 +5155,7 @@ self.addEventListener(
 
           }
 
-          if (
-            clients.openWindow
-          ) {
+          if (clients.openWindow) {
             return clients.openWindow(
               targetUrl
             );
@@ -5139,7 +5169,7 @@ self.addEventListener(
 );
 
 /* =========================================================
-   CODE NO. PUSH-NOTIFICATION-5001 — PART 2 END
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 7 END
    ========================================================= */
 
 `;
