@@ -47,6 +47,19 @@ export default {
          PWA TRACKING API
          ============================================= */
 
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 3B ROUTE
+   FCM TOKEN REGISTER API
+   ========================================================= */
+
+if (path === "/api/push/register") {
+  return handlePushRegister(request, env);
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 3B ROUTE END
+   ========================================================= */
+       
       if (path === "/api/pwa/install") {
         return handleInstall(request, env);
       }
