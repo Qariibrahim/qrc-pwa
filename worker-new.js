@@ -2633,6 +2633,20 @@ textarea{
 
     </div>
 
+<div class="field">
+
+  <label>
+    🔘 Link Text
+  </label>
+
+  <input
+    id="pushLinkText"
+    maxlength="40"
+    value="Abhi Dekhein"
+    placeholder="Misal: Abhi Dekhein"
+  />
+
+</div>
 
     <button
       class="send-btn"
