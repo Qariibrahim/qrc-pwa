@@ -1737,6 +1737,470 @@ async function handlePushTestSend(
    ========================================================= */
 
 /* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 5
+   BROADCAST PUSH TO ALL ACTIVE USERS
+   ========================================================= */
+
+async function handlePushBroadcast(
+  request,
+  env
+) {
+
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  if (!env.PWA_ADMIN_KEY) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "PWA_ADMIN_KEY secret is missing."
+      },
+      500
+    );
+  }
+
+  const url =
+    new URL(request.url);
+
+  const suppliedKey =
+    cleanText(
+      url.searchParams.get("key")
+    );
+
+  if (
+    !suppliedKey ||
+    suppliedKey !==
+      String(env.PWA_ADMIN_KEY)
+  ) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Unauthorized broadcast."
+      },
+      401
+    );
+  }
+
+  if (
+    !env.FIREBASE_PROJECT_ID ||
+    !env.FIREBASE_CLIENT_EMAIL ||
+    !env.FIREBASE_PRIVATE_KEY
+  ) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Firebase secrets are missing."
+      },
+      500
+    );
+  }
+
+  const title =
+    cleanText(
+      url.searchParams.get("title"),
+      "Imdade Rohani"
+    ).slice(0, 120);
+
+  const message =
+    cleanText(
+      url.searchParams.get("body"),
+      "Imdade Rohani se nayi maloomat mojood hai."
+    ).slice(0, 500);
+
+  const targetUrl =
+    cleanText(
+      url.searchParams.get("url"),
+      SITE_ORIGIN
+    );
+
+  const rows =
+    await env.DB.prepare(
+      `
+        SELECT
+          id,
+          token,
+          device_id,
+          platform,
+          browser
+        FROM push_tokens
+        WHERE status = 'active'
+        ORDER BY updated_at DESC
+      `
+    ).all();
+
+  const users =
+    rows &&
+    Array.isArray(rows.results)
+      ? rows.results
+      : [];
+
+  if (!users.length) {
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "No active push users found."
+      },
+      404
+    );
+  }
+
+  try {
+
+    /*
+      Firebase OAuth token sirf ek baar
+      liya jayega, phir sab users ke liye
+      wahi token istemal hoga.
+    */
+    const accessToken =
+      await getFirebaseAccessToken(
+        env
+      );
+
+    let sent = 0;
+    let failed = 0;
+    let deactivated = 0;
+
+    const failures = [];
+
+    /*
+      Users ko chhote batches mein bhejna
+      Worker par zyada load se bachata hai.
+    */
+    const batchSize = 20;
+
+    for (
+      let start = 0;
+      start < users.length;
+      start += batchSize
+    ) {
+
+      const batch =
+        users.slice(
+          start,
+          start + batchSize
+        );
+
+      const results =
+        await Promise.all(
+          batch.map(
+            async pushUser => {
+
+              try {
+
+                const payload = {
+
+                  message: {
+
+                    token:
+                      String(
+                        pushUser.token
+                      ),
+
+                    notification: {
+                      title:
+                        title,
+                      body:
+                        message
+                    },
+
+                    data: {
+
+                      title:
+                        title,
+
+                      body:
+                        message,
+
+                      icon:
+                        SITE_ORIGIN +
+                        "/pwa-icon-192.png",
+
+                      badge:
+                        SITE_ORIGIN +
+                        "/pwa-icon-192.png",
+
+                      tag:
+                        "imdade-rohani-broadcast",
+
+                      url:
+                        targetUrl
+
+                    },
+
+                    webpush: {
+
+                      headers: {
+                        Urgency: "high"
+                      },
+
+                      fcm_options: {
+                        link:
+                          targetUrl
+                      }
+
+                    }
+
+                  }
+
+                };
+
+                const response =
+                  await fetch(
+
+                    "https://fcm.googleapis.com/v1/projects/" +
+                    encodeURIComponent(
+                      String(
+                        env.FIREBASE_PROJECT_ID
+                      )
+                    ) +
+                    "/messages:send",
+
+                    {
+                      method: "POST",
+
+                      headers: {
+
+                        "Authorization":
+                          "Bearer " +
+                          accessToken,
+
+                        "Content-Type":
+                          "application/json"
+
+                      },
+
+                      body:
+                        JSON.stringify(
+                          payload
+                        )
+
+                    }
+
+                  );
+
+                const responseText =
+                  await response.text();
+
+                let firebaseResult =
+                  null;
+
+                try {
+                  firebaseResult =
+                    JSON.parse(
+                      responseText
+                    );
+                } catch (error) {
+                  firebaseResult =
+                    responseText;
+                }
+
+                if (response.ok) {
+                  return {
+                    ok: true,
+                    user:
+                      pushUser
+                  };
+                }
+
+                /*
+                  Sirf confirmed UNREGISTERED
+                  token ko inactive kiya jayega.
+                */
+                let unregister =
+                  false;
+
+                const details =
+                  firebaseResult &&
+                  firebaseResult.error &&
+                  Array.isArray(
+                    firebaseResult
+                      .error
+                      .details
+                  )
+                    ? firebaseResult
+                        .error
+                        .details
+                    : [];
+
+                for (
+                  const detail of details
+                ) {
+                  if (
+                    detail &&
+                    detail.errorCode ===
+                      "UNREGISTERED"
+                  ) {
+                    unregister =
+                      true;
+                    break;
+                  }
+                }
+
+                if (unregister) {
+
+                  await env.DB.prepare(
+                    `
+                      UPDATE push_tokens
+                      SET
+                        status = 'inactive',
+                        updated_at = ?
+                      WHERE token = ?
+                    `
+                  )
+                  .bind(
+                    new Date()
+                      .toISOString(),
+                    String(
+                      pushUser.token
+                    )
+                  )
+                  .run();
+
+                }
+
+                return {
+                  ok: false,
+                  inactive:
+                    unregister,
+                  user:
+                    pushUser,
+                  status:
+                    response.status,
+                  firebase:
+                    firebaseResult
+                };
+
+              } catch (error) {
+
+                return {
+                  ok: false,
+                  inactive: false,
+                  user:
+                    pushUser,
+                  status: 0,
+                  firebase: {
+                    message:
+                      error &&
+                      error.message
+                        ? error.message
+                        : String(error)
+                  }
+                };
+
+              }
+
+            }
+          )
+        );
+
+      for (
+        const result of results
+      ) {
+
+        if (result.ok) {
+
+          sent += 1;
+
+        } else {
+
+          failed += 1;
+
+          if (result.inactive) {
+            deactivated += 1;
+          }
+
+          failures.push({
+            device_id:
+              result.user &&
+              result.user.device_id
+                ? result.user.device_id
+                : null,
+
+            status:
+              result.status,
+
+            token_deactivated:
+              Boolean(
+                result.inactive
+              )
+          });
+
+        }
+
+      }
+
+    }
+
+    return jsonResponse({
+
+      success: true,
+
+      event:
+        "broadcast_completed",
+
+      title:
+        title,
+
+      message:
+        message,
+
+      total_active_tokens:
+        users.length,
+
+      successfully_sent:
+        sent,
+
+      failed:
+        failed,
+
+      invalid_tokens_deactivated:
+        deactivated,
+
+      failures:
+        failures.slice(0, 50),
+
+      sent_at:
+        new Date()
+          .toISOString()
+
+    });
+
+  } catch (error) {
+
+    return jsonResponse(
+      {
+        success: false,
+
+        error:
+          "Broadcast push failed.",
+
+        message:
+          error &&
+          error.message
+            ? error.message
+            : String(error)
+      },
+      500
+    );
+
+  }
+
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 5 END
+   ========================================================= */
+
+/* =========================================================
    API: NEW INSTALLATION
    POST /api/pwa/install
    ========================================================= */
