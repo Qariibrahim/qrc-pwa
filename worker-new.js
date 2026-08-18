@@ -67,6 +67,18 @@ if (path === "/api/push/test-send") {
 /* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 4 ROUTE END
    ========================================================= */
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 5 BROADCAST ROUTE
+   ========================================================= */
+
+if (path === "/api/push/broadcast") {
+  return handlePushBroadcast(request, env);
+}
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 5 ROUTE END
+   ========================================================= */
        
 /* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 3B ROUTE END
