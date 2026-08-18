@@ -2971,6 +2971,135 @@ self.addEventListener(
     }
   }
 );
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 2
+   PUSH RECEIVE + NOTIFICATION CLICK
+   ========================================================= */
+
+self.addEventListener(
+  "push",
+  event => {
+
+    let data = {};
+
+    try {
+      data = event.data
+        ? event.data.json()
+        : {};
+    } catch (error) {
+
+      data = {
+        title: "Imdade Rohani",
+        body: event.data
+          ? event.data.text()
+          : "Nayi notification mojood hai."
+      };
+
+    }
+
+    const title =
+      data.title ||
+      "Imdade Rohani";
+
+    const options = {
+
+      body:
+        data.body ||
+        "Imdade Rohani se nayi maloomat mojood hai.",
+
+      icon:
+        data.icon ||
+        "/pwa-icon-192.png",
+
+      badge:
+        data.badge ||
+        "/pwa-icon-192.png",
+
+      image:
+        data.image || undefined,
+
+      tag:
+        data.tag ||
+        "imdaderohani-notification",
+
+      renotify: true,
+
+      data: {
+        url:
+          data.url ||
+          "/"
+      }
+
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(
+        title,
+        options
+      )
+    );
+
+  }
+);
+
+
+/* Notification par click */
+self.addEventListener(
+  "notificationclick",
+  event => {
+
+    event.notification.close();
+
+    const targetUrl =
+      (
+        event.notification.data &&
+        event.notification.data.url
+      )
+        ? event.notification.data.url
+        : "/";
+
+    event.waitUntil(
+
+      clients
+        .matchAll({
+          type: "window",
+          includeUncontrolled: true
+        })
+        .then(windowClients => {
+
+          for (
+            const client of windowClients
+          ) {
+
+            if (
+              client.url === targetUrl &&
+              "focus" in client
+            ) {
+              return client.focus();
+            }
+
+          }
+
+          if (
+            clients.openWindow
+          ) {
+            return clients.openWindow(
+              targetUrl
+            );
+          }
+
+        })
+
+    );
+
+  }
+);
+
+/* =========================================================
+   CODE NO. PUSH-NOTIFICATION-5001 — PART 2 END
+   ========================================================= */
+
 `;
 }
 
