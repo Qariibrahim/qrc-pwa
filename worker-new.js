@@ -2711,101 +2711,31 @@ textarea{
 
     </div>
 
-
-    <div class="field">
-
-      <label>
-        🔗 Notification Click Link
-      </label>
-
-      <input
-        id="pushUrl"
-        type="url"
-        value="${SITE_ORIGIN}"
-        placeholder="https://qrc.imdaderohani.in"
-      />
-
-    </div>
-
-<div class="field">
-
-  <label>
-    🔘 Link Text
-  </label>
-
-  <input
-    id="pushLinkText"
-    maxlength="40"
-    value="Abhi Dekhein"
-    placeholder="Misal: Abhi Dekhein"
-  />
-
-</div>
-
-
 <!-- =========================================
-     PUSH BUTTON 2
+     DYNAMIC NOTIFICATION LINKS
      ========================================= -->
 
-<div class="field">
+<div id="pushLinksContainer"></div>
 
-  <label>
-    🔗 Notification Click Link 2
-  </label>
+<button
+  type="button"
+  id="addPushLinkButton"
+  style="
+    width:100%;
+    padding:15px 18px;
+    margin:8px 0 18px 0;
+    border:2px dashed #0b318f;
+    border-radius:16px;
+    background:#eef4ff;
+    color:#0b318f;
+    font-size:18px;
+    font-weight:800;
+    cursor:pointer;
+  "
+>
+  ➕ ADD LINK
+</button>
 
-  <input
-    id="pushUrl2"
-    type="url"
-    placeholder="Doosra link yahan likhein"
-  />
-
-</div>
-
-<div class="field">
-
-  <label>
-    🔘 Link Text 2
-  </label>
-
-  <input
-    id="pushLinkText2"
-    maxlength="40"
-    placeholder="Misal: Tafseel Dekhein"
-  />
-
-</div>
-
-<!-- =========================================
-     PUSH BUTTON 3
-     ========================================= -->
-
-<div class="field">
-
-  <label>
-    🔗 Notification Click Link 3
-  </label>
-
-  <input
-    id="pushUrl3"
-    type="url"
-    placeholder="Teesra link yahan likhein"
-  />
-
-</div>
-
-<div class="field">
-
-  <label>
-    🔘 Link Text 3
-  </label>
-
-  <input
-    id="pushLinkText3"
-    maxlength="40"
-    placeholder="Misal: Abhi Kholein"
-  />
-
-</div>
     <button
       class="send-btn"
       id="sendButton"
