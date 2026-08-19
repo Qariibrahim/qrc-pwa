@@ -2859,6 +2859,18 @@ if (!linkText) {
   linkText = "Abhi Dekhein";
 }
 
+var url2 =
+  pushUrl2.value.trim();
+
+var linkText2 =
+  pushLinkText2.value.trim();
+
+var url3 =
+  pushUrl3.value.trim();
+
+var linkText3 =
+  pushLinkText3.value.trim();
+
       if (!key) {
 
         showResult(
@@ -2947,7 +2959,19 @@ if (!linkText) {
   url,
 
 link_text:
-  linkText
+  linkText,
+
+url2:
+  url2,
+
+link_text2:
+  linkText2,
+
+url3:
+  url3,
+
+link_text3:
+  linkText3
                 })
             }
           );
