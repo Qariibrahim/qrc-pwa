@@ -2772,6 +2772,26 @@ var pushLinkText =
     "pushLinkText"
   );
 
+var pushUrl2 =
+  document.getElementById(
+    "pushUrl2"
+  );
+
+var pushLinkText2 =
+  document.getElementById(
+    "pushLinkText2"
+  );
+
+var pushUrl3 =
+  document.getElementById(
+    "pushUrl3"
+  );
+
+var pushLinkText3 =
+  document.getElementById(
+    "pushLinkText3"
+  );
+
   var sendButton =
     document.getElementById(
       "sendButton"
