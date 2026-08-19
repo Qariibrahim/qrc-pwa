@@ -1920,15 +1920,15 @@ async function handlePushBroadcast(
     ).slice(0, 500);
 
   const targetUrl =
-    cleanText(
-      url.searchParams.get("url"),
-      SITE_ORIGIN
-    );
+  cleanText(
+    url.searchParams.get("url"),
+    ""
+  );
 
 const linkText =
   cleanText(
     url.searchParams.get("link_text"),
-    "Abhi Dekhein"
+    ""
   ).slice(0, 40);
 
 const targetUrl2 =
