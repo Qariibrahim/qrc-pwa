@@ -2346,6 +2346,85 @@ const linkText3 =
     body.link_text3,
     ""
   ).slice(0, 40);
+
+/* =========================================
+   SINGLE LINK / MULTI LINK FINAL TARGET
+   ========================================= */
+
+let notificationTargetUrl =
+  targetUrl;
+
+let notificationButtonText =
+  linkText || "Abhi Dekhein";
+
+const hasSecondLink =
+  Boolean(
+    targetUrl2 &&
+    linkText2
+  );
+
+const hasThirdLink =
+  Boolean(
+    targetUrl3 &&
+    linkText3
+  );
+
+if (
+  hasSecondLink ||
+  hasThirdLink
+) {
+
+  const choiceUrl =
+    new URL(
+      SITE_ORIGIN +
+      "/notification-links"
+    );
+
+  if (
+    targetUrl &&
+    linkText
+  ) {
+    choiceUrl.searchParams.set(
+      "url",
+      targetUrl
+    );
+
+    choiceUrl.searchParams.set(
+      "text",
+      linkText
+    );
+  }
+
+  if (hasSecondLink) {
+    choiceUrl.searchParams.set(
+      "url2",
+      targetUrl2
+    );
+
+    choiceUrl.searchParams.set(
+      "text2",
+      linkText2
+    );
+  }
+
+  if (hasThirdLink) {
+    choiceUrl.searchParams.set(
+      "url3",
+      targetUrl3
+    );
+
+    choiceUrl.searchParams.set(
+      "text3",
+      linkText3
+    );
+  }
+
+  notificationTargetUrl =
+    choiceUrl.toString();
+
+  notificationButtonText =
+    "Options Dekhein";
+}
      
     /*
      * Existing Part 5 Broadcast function
