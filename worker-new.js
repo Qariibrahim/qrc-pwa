@@ -2652,6 +2652,70 @@ textarea{
 
 </div>
 
+
+<!-- =========================================
+     PUSH BUTTON 2
+     ========================================= -->
+
+<div class="field">
+
+  <label>
+    🔗 Notification Click Link 2
+  </label>
+
+  <input
+    id="pushUrl2"
+    type="url"
+    placeholder="Doosra link yahan likhein"
+  />
+
+</div>
+
+<div class="field">
+
+  <label>
+    🔘 Link Text 2
+  </label>
+
+  <input
+    id="pushLinkText2"
+    maxlength="40"
+    placeholder="Misal: Tafseel Dekhein"
+  />
+
+</div>
+
+<!-- =========================================
+     PUSH BUTTON 3
+     ========================================= -->
+
+<div class="field">
+
+  <label>
+    🔗 Notification Click Link 3
+  </label>
+
+  <input
+    id="pushUrl3"
+    type="url"
+    placeholder="Teesra link yahan likhein"
+  />
+
+</div>
+
+<div class="field">
+
+  <label>
+    🔘 Link Text 3
+  </label>
+
+  <input
+    id="pushLinkText3"
+    maxlength="40"
+    placeholder="Misal: Abhi Kholein"
+  />
+
+</div>
     <button
       class="send-btn"
       id="sendButton"
