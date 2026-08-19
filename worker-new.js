@@ -2823,6 +2823,81 @@ var pushLinkCount = 0;
     }
   );
 
+/* =========================================
+   DYNAMIC ADD LINK BUTTON
+   Maximum 3 links
+   ========================================= */
+
+addPushLinkButton.addEventListener(
+  "click",
+  function(){
+
+    if (pushLinkCount >= 3) {
+      showResult(
+        "error",
+        "Maximum 3 links hi add kiye ja sakte hain."
+      );
+      return;
+    }
+
+    pushLinkCount++;
+
+    var linkNumber =
+      pushLinkCount;
+
+    var linkBox =
+      document.createElement("div");
+
+    linkBox.className =
+      "dynamic-link-box";
+
+    linkBox.style.cssText =
+      "margin:0 0 18px 0;" +
+      "padding:16px;" +
+      "border:1px solid #ccd5e5;" +
+      "border-radius:16px;" +
+      "background:#f9fbff;";
+
+    linkBox.innerHTML =
+      '<div class="field">' +
+        '<label>🔗 Notification Click Link ' +
+        linkNumber +
+        '</label>' +
+
+        '<input ' +
+          'type="url" ' +
+          'class="dynamic-push-url" ' +
+          'placeholder="Link yahan likhein" ' +
+        '/>' +
+      '</div>' +
+
+      '<div class="field">' +
+        '<label>🔘 Link Text ' +
+        linkNumber +
+        '</label>' +
+
+        '<input ' +
+          'type="text" ' +
+          'maxlength="40" ' +
+          'class="dynamic-push-link-text" ' +
+          'placeholder="Misal: Abhi Dekhein" ' +
+        '/>' +
+      '</div>';
+
+    pushLinksContainer.appendChild(
+      linkBox
+    );
+
+    if (pushLinkCount >= 3) {
+      addPushLinkButton.disabled =
+        true;
+
+      addPushLinkButton.textContent =
+        "Maximum 3 Links Add Ho Chuke";
+    }
+
+  }
+);
 
   function showResult(
     type,
