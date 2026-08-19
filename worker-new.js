@@ -5326,7 +5326,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v3";
+const VERSION = "imdaderohani-pwa-v4";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -5336,7 +5336,6 @@ const STATIC_CACHE =
 
 const OFFLINE_URL =
   "/offline.html";
-
 
 self.addEventListener(
   "install",
