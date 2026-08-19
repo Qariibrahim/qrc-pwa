@@ -5608,11 +5608,11 @@ self.addEventListener(
 
     const targetUrl =
   data.url ||
-  "/";
+  "";
 
 const actionText =
   data.action_text ||
-  "Abhi Dekhein";
+  "";
 
 const targetUrl2 =
   data.url2 || "";
@@ -5722,7 +5722,7 @@ self.addEventListener(
   event.notification.data || {};
 
 let targetUrl =
-  notificationData.url || "/";
+  notificationData.url || "";
 
 if (
   event.action === "open_link_2"
