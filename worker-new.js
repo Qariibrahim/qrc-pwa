@@ -5730,7 +5730,7 @@ if (
   targetUrl =
     notificationData.url2 ||
     notificationData.url ||
-    "/";
+    "";
 }
 
 if (
@@ -5739,7 +5739,7 @@ if (
   targetUrl =
     notificationData.url3 ||
     notificationData.url ||
-    "/";
+    "";
 }
 
     event.waitUntil(
