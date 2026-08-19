@@ -2395,15 +2395,15 @@ async function handlePushAdminPage(
       ).slice(0, 500);
 
     const targetUrl =
-      cleanText(
-        body.url,
-        SITE_ORIGIN
-      );
+  cleanText(
+    body.url,
+    ""
+  );
 
 const linkText =
   cleanText(
     body.link_text,
-    "Abhi Dekhein"
+    ""
   ).slice(0, 40);
 
 const targetUrl2 =
@@ -2438,7 +2438,7 @@ let notificationTargetUrl =
   targetUrl;
 
 let notificationButtonText =
-  linkText || "Abhi Dekhein";
+  linkText;
 
 const hasSecondLink =
   Boolean(
