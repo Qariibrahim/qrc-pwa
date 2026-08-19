@@ -2375,10 +2375,10 @@ if (
 ) {
 
   const choiceUrl =
-    new URL(
-      SITE_ORIGIN +
-      "/notification-links"
-    );
+  new URL(
+    new URL(request.url).origin +
+    "/notification-links"
+  );
 
   if (
     targetUrl &&
