@@ -338,6 +338,48 @@ if (path === "/notification-bell.svg") {
     }
   );
 }
+
+/* =============================================
+   NOTIFICATION BELL PNG ICON
+   ============================================= */
+
+if (path === "/notification-bell.png") {
+
+  const bellPngBase64 =
+    "iVBORw0KGgoAAAANSUhEUgAAAGAAAABgCAYAAADimHc4AAABaUlEQVR42u3dWw7CMAwFUeL977ksAAlBH0lsn/lEQjh3aietELxeAAAAALoxshZ+HMfxsZgx0q0nqoT/7XUCJoSfVUJUCj+jhKgWfjYJKfeAShDgGPr8KNn5eDqqhp5FxugS/K4iomP4O52SomP4O0kYHYPfaSSF8NfWE8JfW1cIf2197oQ7nYKyPCCbWWcIf229Ify1ddsDqu8BWa/+WfXrgE6nIEwWkH38zFiHDjCCCDB+Fq5HBxhBBIAAAkAAASCAABBAAAggAAQQAAIIAAEEgAACQAABIIAAEEAACKjD5d9HqPYl3FMhXvidiVj54d3DN4Kq7AFdu+COdcdOxXQL3wiqdgzt0gV3rjN2Lq56+EZQ1Tvhql3wxLoiU7HVwjeCqo6gal3w5DpSBHTlgd/uF0FUDv+O97cXYA8AAQSgr4CrpxinIOQXcPYqznAjmKYD/g0zy114qhH0a6iZHoH4P2EAAACgH29qh6B7Yic17QAAAABJRU5ErkJggg==";
+
+  const binary =
+    atob(bellPngBase64);
+
+  const bytes =
+    new Uint8Array(binary.length);
+
+  for (
+    let i = 0;
+    i < binary.length;
+    i++
+  ) {
+    bytes[i] =
+      binary.charCodeAt(i);
+  }
+
+  return new Response(
+    bytes,
+    {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "image/png",
+
+        "Cache-Control":
+          "public, max-age=86400",
+
+        "X-Content-Type-Options":
+          "nosniff"
+      }
+    }
+  );
+}
        
       if (path === "/pwa-icon-192.png") {
                 return fetch(LOGO_URL, {
