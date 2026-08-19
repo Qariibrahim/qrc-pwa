@@ -89,6 +89,15 @@ if (path === "/api/push/admin") {
 }
 
 /* =========================================================
+   PUSH NOTIFICATION MULTI LINK CHOICE PAGE
+   ========================================================= */
+
+if (path === "/notification-links") {
+  return handleNotificationLinksPage(
+    request
+  );
+}
+/* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 6 ROUTE END
    ========================================================= */
        
