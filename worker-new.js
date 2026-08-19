@@ -2277,6 +2277,30 @@ const linkText =
     body.link_text,
     "Abhi Dekhein"
   ).slice(0, 40);
+
+const targetUrl2 =
+  cleanText(
+    body.url2,
+    ""
+  );
+
+const linkText2 =
+  cleanText(
+    body.link_text2,
+    ""
+  ).slice(0, 40);
+
+const targetUrl3 =
+  cleanText(
+    body.url3,
+    ""
+  );
+
+const linkText3 =
+  cleanText(
+    body.link_text3,
+    ""
+  ).slice(0, 40);
      
     /*
      * Existing Part 5 Broadcast function
@@ -2316,6 +2340,36 @@ internalUrl.searchParams.set(
   "link_text",
   linkText
 );
+
+if (
+  targetUrl2 &&
+  linkText2
+) {
+  internalUrl.searchParams.set(
+    "url2",
+    targetUrl2
+  );
+
+  internalUrl.searchParams.set(
+    "link_text2",
+    linkText2
+  );
+}
+
+if (
+  targetUrl3 &&
+  linkText3
+) {
+  internalUrl.searchParams.set(
+    "url3",
+    targetUrl3
+  );
+
+  internalUrl.searchParams.set(
+    "link_text3",
+    linkText3
+  );
+}
      
     const internalRequest =
       new Request(
