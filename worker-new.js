@@ -3211,6 +3211,223 @@ link_text3:
    ========================================================= */
 
 /* =========================================================
+   PUSH NOTIFICATION MULTI LINK CHOICE PAGE
+   ========================================================= */
+
+function handleNotificationLinksPage(request) {
+
+  const pageUrl =
+    new URL(request.url);
+
+  const links = [];
+
+  function addLink(
+    urlName,
+    textName
+  ) {
+
+    const target =
+      cleanText(
+        pageUrl.searchParams.get(urlName)
+      );
+
+    const text =
+      cleanText(
+        pageUrl.searchParams.get(textName)
+      );
+
+    if (
+      target &&
+      text
+    ) {
+      links.push({
+        url: target,
+        text: text.slice(0, 40)
+      });
+    }
+  }
+
+  addLink("url", "text");
+  addLink("url2", "text2");
+  addLink("url3", "text3");
+
+
+  function escapeHtml(value) {
+    return String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
+  }
+
+
+  const buttonsHtml =
+    links.length
+      ? links.map(
+          item => `
+            <a
+              class="choice-btn"
+              href="${escapeHtml(item.url)}"
+            >
+              ${escapeHtml(item.text)}
+            </a>
+          `
+        ).join("")
+      : `
+          <div class="empty">
+            Koi link mojood nahi hai.
+          </div>
+        `;
+
+
+  const html = `<!DOCTYPE html>
+
+<html lang="ur" dir="rtl">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1"
+/>
+
+<title>
+  Imdade Rohani
+</title>
+
+<style>
+
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  min-height:100vh;
+  padding:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:
+    linear-gradient(
+      160deg,
+      #001b4d,
+      #003983,
+      #061b44
+    );
+  font-family:Arial,sans-serif;
+}
+
+.card{
+  width:100%;
+  max-width:430px;
+  background:#fff;
+  border-radius:24px;
+  padding:26px 20px;
+  text-align:center;
+  box-shadow:
+    0 18px 50px
+    rgba(0,0,0,.30);
+}
+
+.logo{
+  width:90px;
+  height:90px;
+  border-radius:50%;
+  object-fit:cover;
+  border:3px solid #dba62f;
+}
+
+h1{
+  color:#002087;
+  font-size:25px;
+  margin:15px 0 8px;
+}
+
+p{
+  color:#667085;
+  line-height:1.7;
+  margin:0 0 20px;
+}
+
+.choice-btn{
+  display:block;
+  width:100%;
+  margin:12px 0;
+  padding:15px 16px;
+  background:#002087;
+  color:#fff;
+  text-decoration:none;
+  border-radius:14px;
+  font-size:17px;
+  font-weight:700;
+}
+
+.choice-btn:active{
+  transform:scale(.98);
+}
+
+.empty{
+  padding:15px;
+  color:#9f1239;
+  background:#fff1f2;
+  border-radius:12px;
+}
+
+</style>
+
+</head>
+
+<body>
+
+<div class="card">
+
+  <img
+    class="logo"
+    src="${LOGO_URL}"
+    alt="Imdade Rohani"
+  />
+
+  <h1>
+    Imdade Rohani
+  </h1>
+
+  <p>
+    Neeche apni pasand ka option chunein
+  </p>
+
+  ${buttonsHtml}
+
+</div>
+
+</body>
+
+</html>`;
+
+
+  return new Response(
+    html,
+    {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "text/html; charset=UTF-8",
+
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate",
+
+        "X-Content-Type-Options":
+          "nosniff"
+      }
+    }
+  );
+
+}
+
+/* =========================================================
    API: NEW INSTALLATION
    POST /api/pwa/install
    ========================================================= */
