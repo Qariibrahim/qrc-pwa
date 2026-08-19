@@ -5621,6 +5621,12 @@ if (
       body:
         body,
 
+icon:
+  "/notification-bell.svg",
+
+badge:
+  "/notification-bell.svg",
+
       image:
         data.image ||
         undefined,
