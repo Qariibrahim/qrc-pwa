@@ -1838,6 +1838,30 @@ const linkText =
     url.searchParams.get("link_text"),
     "Abhi Dekhein"
   ).slice(0, 40);
+
+const targetUrl2 =
+  cleanText(
+    url.searchParams.get("url2"),
+    ""
+  );
+
+const linkText2 =
+  cleanText(
+    url.searchParams.get("link_text2"),
+    ""
+  ).slice(0, 40);
+
+const targetUrl3 =
+  cleanText(
+    url.searchParams.get("url3"),
+    ""
+  );
+
+const linkText3 =
+  cleanText(
+    url.searchParams.get("link_text3"),
+    ""
+  ).slice(0, 40);
    
   const rows =
     await env.DB.prepare(
@@ -1942,7 +1966,19 @@ url:
   targetUrl,
 
 action_text:
-  linkText
+  linkText,
+
+url2:
+  targetUrl2,
+
+action_text2:
+  linkText2,
+
+url3:
+  targetUrl3,
+
+action_text3:
+  linkText3
 
                     },
 
