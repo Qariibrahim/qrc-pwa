@@ -5622,10 +5622,10 @@ if (
         body,
 
 icon:
-  "/notification-bell.svg",
+  "/notification-bell.png",
 
 badge:
-  "/notification-bell.svg",
+  "/notification-bell.png",
 
       image:
         data.image ||
