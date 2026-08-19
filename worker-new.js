@@ -5294,10 +5294,6 @@ if (
       body:
         body,
 
-      icon:
-        data.icon ||
-        "/pwa-icon-192.png",
-
       image:
         data.image ||
         undefined,
