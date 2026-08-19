@@ -5742,6 +5742,14 @@ if (
     "";
 }
 
+/*
+  Link nahi hai to notification sirf close hogi.
+  App ya website open nahi hogi.
+*/
+if (!targetUrl) {
+  return;
+}
+
     event.waitUntil(
 
       clients
