@@ -2782,35 +2782,17 @@ textarea{
       "pushMessage"
     );
 
-  var pushUrl =
-    document.getElementById(
-      "pushUrl"
-    );
-
-var pushLinkText =
+  var pushLinksContainer =
   document.getElementById(
-    "pushLinkText"
+    "pushLinksContainer"
   );
 
-var pushUrl2 =
+var addPushLinkButton =
   document.getElementById(
-    "pushUrl2"
+    "addPushLinkButton"
   );
 
-var pushLinkText2 =
-  document.getElementById(
-    "pushLinkText2"
-  );
-
-var pushUrl3 =
-  document.getElementById(
-    "pushUrl3"
-  );
-
-var pushLinkText3 =
-  document.getElementById(
-    "pushLinkText3"
-  );
+var pushLinkCount = 0;
 
   var sendButton =
     document.getElementById(
