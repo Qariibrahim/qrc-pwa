@@ -5238,12 +5238,56 @@ self.addEventListener(
       "Nayi notification mojood hai.";
 
     const targetUrl =
-      data.url ||
-      "/";
+  data.url ||
+  "/";
 
-    const actionText =
-      data.action_text ||
-      "Abhi Dekhein";
+const actionText =
+  data.action_text ||
+  "Abhi Dekhein";
+
+const targetUrl2 =
+  data.url2 || "";
+
+const actionText2 =
+  data.action_text2 || "";
+
+const targetUrl3 =
+  data.url3 || "";
+
+const actionText3 =
+  data.action_text3 || "";
+
+const notificationActions = [];
+
+if (
+  targetUrl &&
+  actionText
+) {
+  notificationActions.push({
+    action: "open_link_1",
+    title: actionText
+  });
+}
+
+if (
+  targetUrl2 &&
+  actionText2
+) {
+  notificationActions.push({
+    action: "open_link_2",
+    title: actionText2
+  });
+}
+
+if (
+  targetUrl3 &&
+  actionText3
+) {
+  notificationActions.push({
+    action: "open_link_3",
+    title: actionText3
+  });
+}
 
     const options = {
 
@@ -5268,19 +5312,19 @@ self.addEventListener(
       requireInteraction:
         true,
 
-      actions: [
-        {
-          action:
-            "open_link",
-          title:
-            actionText
-        }
-      ],
+    actions:
+  notificationActions,
 
-      data: {
-        url:
-          targetUrl
-      }
+data: {
+  url:
+    targetUrl,
+
+  url2:
+    targetUrl2,
+
+  url3:
+    targetUrl3
+}
 
     };
 
@@ -5303,13 +5347,29 @@ self.addEventListener(
 
     event.notification.close();
 
-    const targetUrl =
-      (
-        event.notification.data &&
-        event.notification.data.url
-      )
-        ? event.notification.data.url
-        : "/";
+    const notificationData =
+  event.notification.data || {};
+
+let targetUrl =
+  notificationData.url || "/";
+
+if (
+  event.action === "open_link_2"
+) {
+  targetUrl =
+    notificationData.url2 ||
+    notificationData.url ||
+    "/";
+}
+
+if (
+  event.action === "open_link_3"
+) {
+  targetUrl =
+    notificationData.url3 ||
+    notificationData.url ||
+    "/";
+}
 
     event.waitUntil(
 
