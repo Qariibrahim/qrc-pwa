@@ -2926,27 +2926,52 @@ addPushLinkButton.addEventListener(
       var message =
         pushMessage.value.trim();
 
-      var url =
-        pushUrl.value.trim();
+      var url = "";
+var linkText = "";
 
-var linkText =
-  pushLinkText.value.trim();
+var url2 = "";
+var linkText2 = "";
 
-if (!linkText) {
-  linkText = "Abhi Dekhein";
+var url3 = "";
+var linkText3 = "";
+
+var urlFields =
+  pushLinksContainer.querySelectorAll(
+    ".dynamic-push-url"
+  );
+
+var textFields =
+  pushLinksContainer.querySelectorAll(
+    ".dynamic-push-link-text"
+  );
+
+if (urlFields.length >= 1) {
+  url =
+    urlFields[0].value.trim();
+
+  linkText =
+    textFields[0].value.trim();
+
+  if (url && !linkText) {
+    linkText = "Abhi Dekhein";
+  }
 }
 
-var url2 =
-  pushUrl2.value.trim();
+if (urlFields.length >= 2) {
+  url2 =
+    urlFields[1].value.trim();
 
-var linkText2 =
-  pushLinkText2.value.trim();
+  linkText2 =
+    textFields[1].value.trim();
+}
 
-var url3 =
-  pushUrl3.value.trim();
+if (urlFields.length >= 3) {
+  url3 =
+    urlFields[2].value.trim();
 
-var linkText3 =
-  pushLinkText3.value.trim();
+  linkText3 =
+    textFields[2].value.trim();
+}
 
       if (!key) {
 
@@ -2957,7 +2982,6 @@ var linkText3 =
 
         return;
       }
-
 
       if (!title) {
 
