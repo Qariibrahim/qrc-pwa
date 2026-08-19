@@ -298,6 +298,47 @@ if (path === "/install") {
          PWA ICONS
          ============================================= */
 
+/* =============================================
+   NOTIFICATION BELL ICON
+   ============================================= */
+
+if (path === "/notification-bell.svg") {
+
+  const bellSvg = `
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="192"
+     height="192"
+     viewBox="0 0 192 192">
+
+  <circle
+    cx="96"
+    cy="96"
+    r="88"
+    fill="#002087"
+  />
+
+  <path
+    fill="#ffffff"
+    d="M96 32c-25 0-45 20-45 45v26l-13 20c-4 7 1 15 9 15h98c8 0 13-8 9-15l-13-20V77c0-25-20-45-45-45zm0 128c12 0 22-8 25-19H71c3 11 13 19 25 19z"
+  />
+
+</svg>`;
+
+  return new Response(
+    bellSvg,
+    {
+      status: 200,
+      headers: {
+        "Content-Type":
+          "image/svg+xml; charset=UTF-8",
+
+        "Cache-Control":
+          "public, max-age=86400"
+      }
+    }
+  );
+}
+       
       if (path === "/pwa-icon-192.png") {
                 return fetch(LOGO_URL, {
           cf: {
