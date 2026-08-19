@@ -2456,44 +2456,14 @@ if (
     );
 
     internalUrl.searchParams.set(
-      "url",
-      targetUrl
-    );
+  "url",
+  notificationTargetUrl
+);
 
 internalUrl.searchParams.set(
   "link_text",
-  linkText
+  notificationButtonText
 );
-
-if (
-  targetUrl2 &&
-  linkText2
-) {
-  internalUrl.searchParams.set(
-    "url2",
-    targetUrl2
-  );
-
-  internalUrl.searchParams.set(
-    "link_text2",
-    linkText2
-  );
-}
-
-if (
-  targetUrl3 &&
-  linkText3
-) {
-  internalUrl.searchParams.set(
-    "url3",
-    targetUrl3
-  );
-
-  internalUrl.searchParams.set(
-    "link_text3",
-    linkText3
-  );
-}
      
     const internalRequest =
       new Request(
