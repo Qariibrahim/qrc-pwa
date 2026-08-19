@@ -1935,10 +1935,6 @@ const linkText =
                         SITE_ORIGIN +
                         "/pwa-icon-192.png",
 
-                      badge:
-                        SITE_ORIGIN +
-                        "/pwa-icon-192.png",
-
                      tag:
   "imdade-rohani-broadcast",
 
@@ -5058,10 +5054,6 @@ self.addEventListener(
 
       icon:
         data.icon ||
-        "/pwa-icon-192.png",
-
-      badge:
-        data.badge ||
         "/pwa-icon-192.png",
 
       image:
