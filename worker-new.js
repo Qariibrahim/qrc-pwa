@@ -3542,6 +3542,256 @@ link_text3:
    PUSH NOTIFICATION MULTI LINK CHOICE PAGE
    ========================================================= */
 
+/* =========================================================
+   UNIQUE NOTIFICATION OPTION PAGE
+   D1 LOAD + 3 MINUTE EXPIRY CHECK
+   ========================================================= */
+
+async function handleNotificationOptionPage(
+  request,
+  env
+) {
+
+  if (!env || !env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const pageUrl =
+    new URL(request.url);
+
+  const slug =
+    cleanText(
+      pageUrl.pathname.replace(/^\/+/, "")
+    );
+
+  if (
+    !slug ||
+    !slug.startsWith("option-")
+  ) {
+    return new Response(
+      "Invalid notification option link.",
+      {
+        status: 404,
+        headers: {
+          "Content-Type":
+            "text/plain; charset=UTF-8",
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate"
+        }
+      }
+    );
+  }
+
+  const row =
+    await env.DB.prepare(
+      `
+      SELECT
+        slug,
+        url1,
+        text1,
+        url2,
+        text2,
+        url3,
+        text3,
+        created_at,
+        expires_at
+      FROM notification_option_pages
+      WHERE slug = ?
+      LIMIT 1
+      `
+    )
+    .bind(slug)
+    .first();
+
+  const expired =
+    !row ||
+    !row.expires_at ||
+    Date.now() >=
+      Date.parse(row.expires_at);
+
+  if (expired) {
+
+    const expiredHtml = `<!DOCTYPE html>
+<html lang="ur" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta
+  name="viewport"
+  content="width=device-width,initial-scale=1"
+/>
+<title>Link Expired</title>
+
+<style>
+*{
+  box-sizing:border-box;
+}
+
+body{
+  margin:0;
+  min-height:100vh;
+  padding:20px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:
+    linear-gradient(
+      160deg,
+      #001b4d,
+      #003983,
+      #061b44
+    );
+  font-family:Arial,sans-serif;
+}
+
+.card{
+  width:100%;
+  max-width:430px;
+  background:#fff;
+  border-radius:24px;
+  padding:32px 22px;
+  text-align:center;
+  box-shadow:
+    0 18px 50px rgba(0,0,0,.30);
+}
+
+.icon{
+  font-size:55px;
+  margin-bottom:10px;
+}
+
+h1{
+  color:#9f1239;
+  font-size:25px;
+}
+
+p{
+  color:#667085;
+  line-height:1.8;
+  font-size:17px;
+}
+
+html,
+body,
+.card,
+.card *{
+  -webkit-user-select:none !important;
+  user-select:none !important;
+  -webkit-touch-callout:none !important;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+
+  <div class="icon">⏰</div>
+
+  <h1>
+    Notification Link Expire Ho Chuki Hai
+  </h1>
+
+  <p>
+    Yeh notification link sirf
+    3 minute ke liye valid thi.
+  </p>
+
+  <p>
+    Barai maharbani nayi notification
+    ka intezar karein.
+  </p>
+
+</div>
+
+</body>
+</html>`;
+
+    return new Response(
+      expiredHtml,
+      {
+        status: 410,
+        headers: {
+          "Content-Type":
+            "text/html; charset=UTF-8",
+
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate",
+
+          "X-Content-Type-Options":
+            "nosniff"
+        }
+      }
+    );
+  }
+
+  const legacyUrl =
+    new URL(
+      SITE_ORIGIN +
+      "/notification-links"
+    );
+
+  function addOption(
+    urlName,
+    textName,
+    target,
+    text
+  ) {
+
+    if (
+      target &&
+      text
+    ) {
+      legacyUrl.searchParams.set(
+        urlName,
+        String(target)
+      );
+
+      legacyUrl.searchParams.set(
+        textName,
+        String(text)
+      );
+    }
+  }
+
+  addOption(
+    "url",
+    "text",
+    row.url1,
+    row.text1
+  );
+
+  addOption(
+    "url2",
+    "text2",
+    row.url2,
+    row.text2
+  );
+
+  addOption(
+    "url3",
+    "text3",
+    row.url3,
+    row.text3
+  );
+
+  const internalRequest =
+    new Request(
+      legacyUrl.toString(),
+      {
+        method: "GET",
+        headers: request.headers
+      }
+    );
+
+  return handleNotificationLinksPage(
+    internalRequest
+  );
+}
+
+/* =========================================================
+   UNIQUE NOTIFICATION OPTION PAGE END
+   ========================================================= */
+
 function handleNotificationLinksPage(request) {
 
   const pageUrl =
