@@ -5315,7 +5315,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v4";
+const VERSION = "imdaderohani-pwa-v5";
 
 const PAGE_CACHE =
   VERSION + "-pages";
