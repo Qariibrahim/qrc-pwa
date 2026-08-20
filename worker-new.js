@@ -3606,11 +3606,153 @@ async function handleNotificationOptionPage(
     .bind(slug)
     .first();
 
+    /*
+    ========================================================
+    DEVICE-WISE 3 MINUTE ACCESS
+    Har browser/device ka apna alag timer.
+    ========================================================
+  */
+
+  if (!row) {
+    return new Response(
+      "Notification option page nahi mili.",
+      {
+        status: 404,
+        headers: {
+          "Content-Type":
+            "text/plain; charset=UTF-8",
+
+          "Cache-Control":
+            "no-store, no-cache, must-revalidate"
+        }
+      }
+    );
+  }
+
+  const cookieText =
+    request.headers.get("Cookie") || "";
+
+  const viewerMatch =
+    cookieText.match(
+      /(?:^|;\s*)ir_option_viewer=([A-Za-z0-9_-]{20,100})/
+    );
+
+  let viewerId =
+    viewerMatch
+      ? viewerMatch[1]
+      : "";
+
+  let viewerCookieToSet = "";
+
+  /*
+    Is browser/mobile ko pehli baar
+    ek permanent viewer ID dena.
+  */
+  if (!viewerId) {
+
+    viewerId =
+      crypto.randomUUID()
+        .replace(/-/g, "");
+
+    viewerCookieToSet =
+      "ir_option_viewer=" +
+      viewerId +
+      "; Path=/" +
+      "; Max-Age=315360000" +
+      "; SameSite=Lax" +
+      "; Secure" +
+      "; HttpOnly";
+  }
+
+  /*
+    Dekhein is SLUG ko isi viewer ne
+    pehle kab khola tha.
+  */
+  let accessRow =
+    await env.DB.prepare(
+      `
+      SELECT
+        first_opened_at,
+        expires_at
+      FROM notification_option_device_access
+      WHERE slug = ?
+        AND viewer_id = ?
+      LIMIT 1
+      `
+    )
+    .bind(
+      slug,
+      viewerId
+    )
+    .first();
+
+  /*
+    Pehli baar khola hai:
+    ABHI se 3 minute shuru.
+  */
+  if (!accessRow) {
+
+    const firstOpenedAt =
+      new Date().toISOString();
+
+    const deviceExpiresAt =
+      new Date(
+        Date.now() +
+        3 * 60 * 1000
+      ).toISOString();
+
+    /*
+      INSERT OR IGNORE:
+      ek hi waqt double request aaye
+      tab bhi duplicate timer nahi banega.
+    */
+    await env.DB.prepare(
+      `
+      INSERT OR IGNORE INTO
+      notification_option_device_access
+      (
+        slug,
+        viewer_id,
+        first_opened_at,
+        expires_at
+      )
+      VALUES (?, ?, ?, ?)
+      `
+    )
+    .bind(
+      slug,
+      viewerId,
+      firstOpenedAt,
+      deviceExpiresAt
+    )
+    .run();
+
+    accessRow =
+      await env.DB.prepare(
+        `
+        SELECT
+          first_opened_at,
+          expires_at
+        FROM notification_option_device_access
+        WHERE slug = ?
+          AND viewer_id = ?
+        LIMIT 1
+        `
+      )
+      .bind(
+        slug,
+        viewerId
+      )
+      .first();
+  }
+
   const expired =
-    !row ||
-    !row.expires_at ||
+    !accessRow ||
+    !accessRow.expires_at ||
     Date.now() >=
-      Date.parse(row.expires_at);
+      Date.parse(
+        accessRow.expires_at
+      );
 
   if (expired) {
 
@@ -3786,8 +3928,41 @@ body,
       }
     );
 
-  return handleNotificationLinksPage(
-    internalRequest
+    const pageResponse =
+    handleNotificationLinksPage(
+      internalRequest
+    );
+
+  /*
+    Naya viewer ho to uske browser mein
+    permanent viewer ID save karein.
+  */
+  if (!viewerCookieToSet) {
+    return pageResponse;
+  }
+
+  const responseHeaders =
+    new Headers(
+      pageResponse.headers
+    );
+
+  responseHeaders.set(
+    "Set-Cookie",
+    viewerCookieToSet
+  );
+
+  return new Response(
+    pageResponse.body,
+    {
+      status:
+        pageResponse.status,
+
+      statusText:
+        pageResponse.statusText,
+
+      headers:
+        responseHeaders
+    }
   );
 }
 
