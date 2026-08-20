@@ -3382,25 +3382,25 @@ function handleNotificationLinksPage(request) {
       .replace(/'/g, "&#039;");
   }
 
-
-  const buttonsHtml =
-    links.length
-      ? links.map(
-          item => `
-            <a
-              class="choice-btn"
-              href="${escapeHtml(item.url)}"
-            >
-              ${escapeHtml(item.text)}
-            </a>
-          `
-        ).join("")
-      : `
-          <div class="empty">
-            Koi link mojood nahi hai.
-          </div>
-        `;
-
+const buttonsHtml =
+  links.length
+    ? links.map(
+        item => `
+          <button
+            type="button"
+            class="choice-btn"
+            data-url="${escapeHtml(item.url)}"
+            onclick="window.location.href=this.dataset.url"
+          >
+            ${escapeHtml(item.text)}
+          </button>
+        `
+      ).join("")
+    : `
+        <div class="empty">
+          Koi link mojood nahi hai.
+        </div>
+      `;
 
   const html = `<!DOCTYPE html>
 
