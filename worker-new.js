@@ -2338,6 +2338,211 @@ action_text3:
    PROFESSIONAL PUSH NOTIFICATION ADMIN PAGE
    ========================================================= */
 
+/* =========================================================
+   NOTIFICATION OPTION PAGE
+   UNIQUE SLUG + 3 MINUTE EXPIRY
+   ========================================================= */
+
+function makeNotificationOptionBaseSlug(textList) {
+
+  const parts = textList
+    .filter(Boolean)
+    .map(function(text) {
+
+      return String(text)
+        .trim()
+        .toLowerCase()
+        .normalize("NFKC")
+        .replace(/[^\p{L}\p{N}]+/gu, "-")
+        .replace(/^-+|-+$/g, "");
+
+    })
+    .filter(Boolean);
+
+  const joined =
+    parts.join("-") || "links";
+
+  return "option-" + joined;
+}
+
+
+async function createNotificationOptionPage(
+  env,
+  links
+) {
+
+  if (!env || !env.DB) {
+    throw new Error(
+      "D1 DB notification option page ke liye available nahi hai."
+    );
+  }
+
+  const validLinks =
+    Array.isArray(links)
+      ? links.filter(function(item) {
+          return (
+            item &&
+            item.url &&
+            item.text
+          );
+        }).slice(0, 3)
+      : [];
+
+  if (validLinks.length < 2) {
+    throw new Error(
+      "Option page ke liye kam az kam 2 links zaroori hain."
+    );
+  }
+
+  const baseSlug =
+    makeNotificationOptionBaseSlug(
+      validLinks.map(function(item) {
+        return item.text;
+      })
+    );
+
+  /*
+    Pehli baar:
+    option-phone-channel
+
+    Doosri baar:
+    option-phone-channel-1
+
+    Teesri baar:
+    option-phone-channel-2
+  */
+
+  const lastRow =
+    await env.DB.prepare(
+      `
+      SELECT MAX(sequence_no) AS max_sequence
+      FROM notification_option_pages
+      WHERE base_slug = ?
+      `
+    )
+    .bind(baseSlug)
+    .first();
+
+  let sequenceNo = 0;
+
+  if (
+    lastRow &&
+    lastRow.max_sequence !== null &&
+    lastRow.max_sequence !== undefined
+  ) {
+    sequenceNo =
+      Number(lastRow.max_sequence) + 1;
+  }
+
+  let slug =
+    sequenceNo === 0
+      ? baseSlug
+      : baseSlug + "-" + sequenceNo;
+
+  const createdAt =
+    new Date().toISOString();
+
+  const expiresAt =
+    new Date(
+      Date.now() + 3 * 60 * 1000
+    ).toISOString();
+
+  const first =
+    validLinks[0] || {};
+
+  const second =
+    validLinks[1] || {};
+
+  const third =
+    validLinks[2] || {};
+
+  /*
+    Agar ek hi waqt same slug create hone ki
+    koshish ho to unique constraint se bachne
+    ke liye retry.
+  */
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+
+    try {
+
+      await env.DB.prepare(
+        `
+        INSERT INTO notification_option_pages
+        (
+          base_slug,
+          slug,
+          sequence_no,
+
+          url1,
+          text1,
+
+          url2,
+          text2,
+
+          url3,
+          text3,
+
+          created_at,
+          expires_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .bind(
+        baseSlug,
+        slug,
+        sequenceNo,
+
+        first.url || null,
+        first.text || null,
+
+        second.url || null,
+        second.text || null,
+
+        third.url || null,
+        third.text || null,
+
+        createdAt,
+        expiresAt
+      )
+      .run();
+
+      return {
+        slug: slug,
+        baseSlug: baseSlug,
+        sequenceNo: sequenceNo,
+        createdAt: createdAt,
+        expiresAt: expiresAt
+      };
+
+    } catch (error) {
+
+      /*
+        Same naam ek hi waqt create hua ho
+        to agla number try karein.
+      */
+
+      sequenceNo++;
+
+      slug =
+        baseSlug + "-" + sequenceNo;
+
+      if (attempt === 4) {
+        throw error;
+      }
+    }
+  }
+
+  throw new Error(
+    "Notification option page create nahi ho saka."
+  );
+}
+
+/* =========================================================
+   NOTIFICATION OPTION PAGE HELPER END
+   ========================================================= */
+
 async function handlePushAdminPage(
   request,
   env
