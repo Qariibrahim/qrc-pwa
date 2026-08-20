@@ -92,6 +92,19 @@ if (path === "/api/push/admin") {
    PUSH NOTIFICATION MULTI LINK CHOICE PAGE
    ========================================================= */
 
+/* =========================================================
+   UNIQUE NOTIFICATION OPTION PAGE
+   /option-phone-channel
+   /option-phone-channel-1
+   ========================================================= */
+
+if (path.startsWith("/option-")) {
+  return handleNotificationOptionPage(
+    request,
+    env
+  );
+}
+       
 if (path === "/notification-links") {
   return handleNotificationLinksPage(
     request
