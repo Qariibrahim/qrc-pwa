@@ -2662,53 +2662,42 @@ if (
   hasThirdLink
 ) {
 
-  const choiceUrl =
-  new URL(
-    new URL(request.url).origin +
-    "/notification-links"
-  );
+  const optionLinks = [];
 
   if (
     targetUrl &&
     linkText
   ) {
-    choiceUrl.searchParams.set(
-      "url",
-      targetUrl
-    );
-
-    choiceUrl.searchParams.set(
-      "text",
-      linkText
-    );
+    optionLinks.push({
+      url: targetUrl,
+      text: linkText
+    });
   }
 
   if (hasSecondLink) {
-    choiceUrl.searchParams.set(
-      "url2",
-      targetUrl2
-    );
-
-    choiceUrl.searchParams.set(
-      "text2",
-      linkText2
-    );
+    optionLinks.push({
+      url: targetUrl2,
+      text: linkText2
+    });
   }
 
   if (hasThirdLink) {
-    choiceUrl.searchParams.set(
-      "url3",
-      targetUrl3
-    );
-
-    choiceUrl.searchParams.set(
-      "text3",
-      linkText3
-    );
+    optionLinks.push({
+      url: targetUrl3,
+      text: linkText3
+    });
   }
 
+  const optionPage =
+    await createNotificationOptionPage(
+      env,
+      optionLinks
+    );
+
   notificationTargetUrl =
-    choiceUrl.toString();
+    SITE_ORIGIN +
+    "/" +
+    optionPage.slug;
 
   notificationButtonText =
     "Options Dekhein";
