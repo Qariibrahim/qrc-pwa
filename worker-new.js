@@ -2455,10 +2455,13 @@ async function createNotificationOptionPage(
   const createdAt =
     new Date().toISOString();
 
-  const expiresAt =
-    new Date(
-      Date.now() + 3 * 60 * 1000
-    ).toISOString();
+    /*
+    DEVICE-WISE EXPIRY:
+    Notification bhejne ke waqt timer start nahi hoga.
+    Har device ka apna 3-minute timer
+    pehli baar option page kholne par start hoga.
+  */
+  const expiresAt = null;
 
   const first =
     validLinks[0] || {};
