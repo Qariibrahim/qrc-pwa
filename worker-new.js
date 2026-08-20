@@ -2461,7 +2461,7 @@ async function createNotificationOptionPage(
     Har device ka apna 3-minute timer
     pehli baar option page kholne par start hoga.
   */
-  const expiresAt = null;
+  const expiresAt = "";
 
   const first =
     validLinks[0] || {};
