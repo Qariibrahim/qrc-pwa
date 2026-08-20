@@ -6130,7 +6130,7 @@ if (
         body,
 
 icon:
-  "/notification-bell.png",
+  "/pwa-icon-192.png",
 
 badge:
   "/notification-bell.png",
