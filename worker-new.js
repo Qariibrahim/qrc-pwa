@@ -3487,6 +3487,27 @@ p{
   font-weight:700;
 }
 
+html,
+body,
+.card,
+.card *,
+.choice-btn,
+.logo {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
+
+.logo {
+  -webkit-user-drag: none !important;
+  user-drag: none !important;
+  pointer-events: none !important;
+}
+
+.choice-btn {
+  -webkit-touch-callout: none !important;
+}
+
 .choice-btn:active{
   transform:scale(.98);
 }
