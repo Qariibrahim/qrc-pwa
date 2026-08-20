@@ -3092,10 +3092,6 @@ if (urlFields.length >= 1) {
 
   linkText =
     textFields[0].value.trim();
-
-  if (url && !linkText) {
-    linkText = "Abhi Dekhein";
-  }
 }
 
 if (urlFields.length >= 2) {
@@ -3144,13 +3140,6 @@ if (urlFields.length >= 3) {
 
         return;
       }
-
-
-      if (!url) {
-        url =
-          "${SITE_ORIGIN}";
-      }
-
 
       var confirmed =
         window.confirm(
