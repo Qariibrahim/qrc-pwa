@@ -4824,7 +4824,7 @@ timezone_offset_minutes:
               new Date(
                 data.scheduled_at
               ).toLocaleString() +
-              "\nRepeat: " +
+              "\\nRepeat: " +
               String(data.repeat_type || "no_repeat")
             );
 
