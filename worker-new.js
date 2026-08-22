@@ -2588,9 +2588,47 @@ async function ensureScheduledPushTable(env) {
       last_error TEXT,
       created_at TEXT NOT NULL,
       processing_at TEXT,
-      sent_at TEXT
+      sent_at TEXT,
+      repeat_type TEXT NOT NULL DEFAULT 'no_repeat',
+      updated_at TEXT,
+      timezone_offset_minutes INTEGER NOT NULL DEFAULT 0
     )
   `).run();
+
+  const tableInfo =
+    await env.DB.prepare(`
+      PRAGMA table_info(scheduled_push_notifications)
+    `).all();
+
+  const columnNames =
+    new Set(
+      (tableInfo.results || []).map(
+        function(column){
+          return String(column.name || "");
+        }
+      )
+    );
+
+  if (!columnNames.has("repeat_type")) {
+    await env.DB.prepare(`
+      ALTER TABLE scheduled_push_notifications
+      ADD COLUMN repeat_type TEXT NOT NULL DEFAULT 'no_repeat'
+    `).run();
+  }
+
+  if (!columnNames.has("updated_at")) {
+    await env.DB.prepare(`
+      ALTER TABLE scheduled_push_notifications
+      ADD COLUMN updated_at TEXT
+    `).run();
+  }
+
+  if (!columnNames.has("timezone_offset_minutes")) {
+    await env.DB.prepare(`
+      ALTER TABLE scheduled_push_notifications
+      ADD COLUMN timezone_offset_minutes INTEGER NOT NULL DEFAULT 0
+    `).run();
+  }
 
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_scheduled_push_due
@@ -2621,8 +2659,11 @@ async function saveScheduledPush(env, data) {
         scheduled_at,
         status,
         attempts,
-        created_at
-      ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)
+        created_at,
+        repeat_type,
+        updated_at,
+        timezone_offset_minutes
+      ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
     `)
     .bind(
       data.title,
@@ -2630,7 +2671,10 @@ async function saveScheduledPush(env, data) {
       data.url || "",
       data.link_text || "",
       data.scheduled_at,
-      createdAt
+      createdAt,
+      normalizeRepeatType(data.repeat_type),
+      createdAt,
+      Number(data.timezone_offset_minutes || 0)
     )
     .run();
 
@@ -2642,6 +2686,130 @@ async function saveScheduledPush(env, data) {
     scheduled_at:
       data.scheduled_at
   };
+}
+
+function normalizeRepeatType(value) {
+  const allowed = [
+    "no_repeat",
+    "hourly",
+    "daily",
+    "weekly",
+    "monthly",
+    "yearly",
+    "weekdays",
+    "weekend"
+  ];
+
+  const normalized =
+    cleanText(value, "no_repeat")
+      .toLowerCase();
+
+  return allowed.includes(normalized)
+    ? normalized
+    : "no_repeat";
+}
+
+function getNextRecurringDate(
+  currentIso,
+  repeatType,
+  timezoneOffsetMinutes = 0
+) {
+  const type =
+    normalizeRepeatType(repeatType);
+
+  if (type === "no_repeat") {
+    return null;
+  }
+
+  const offsetMs =
+    Number(timezoneOffsetMinutes || 0) *
+    60000;
+
+  const currentUtc =
+    new Date(currentIso);
+
+  if (!Number.isFinite(currentUtc.getTime())) {
+    return null;
+  }
+
+  let localNext =
+    new Date(
+      currentUtc.getTime() - offsetMs
+    );
+
+  function advanceOnce(date) {
+    if (type === "hourly") {
+      date.setUTCHours(date.getUTCHours() + 1);
+    } else if (type === "daily") {
+      date.setUTCDate(date.getUTCDate() + 1);
+    } else if (type === "weekly") {
+      date.setUTCDate(date.getUTCDate() + 7);
+    } else if (type === "monthly") {
+      const originalDay = date.getUTCDate();
+      date.setUTCDate(1);
+      date.setUTCMonth(date.getUTCMonth() + 1);
+      const lastDay =
+        new Date(
+          Date.UTC(
+            date.getUTCFullYear(),
+            date.getUTCMonth() + 1,
+            0
+          )
+        ).getUTCDate();
+      date.setUTCDate(
+        Math.min(originalDay, lastDay)
+      );
+    } else if (type === "yearly") {
+      const originalMonth = date.getUTCMonth();
+      const originalDay = date.getUTCDate();
+      date.setUTCDate(1);
+      date.setUTCFullYear(date.getUTCFullYear() + 1);
+      date.setUTCMonth(originalMonth);
+      const lastDay =
+        new Date(
+          Date.UTC(
+            date.getUTCFullYear(),
+            originalMonth + 1,
+            0
+          )
+        ).getUTCDate();
+      date.setUTCDate(
+        Math.min(originalDay, lastDay)
+      );
+    } else if (type === "weekdays") {
+      do {
+        date.setUTCDate(date.getUTCDate() + 1);
+      } while (
+        date.getUTCDay() === 0 ||
+        date.getUTCDay() === 6
+      );
+    } else if (type === "weekend") {
+      do {
+        date.setUTCDate(date.getUTCDate() + 1);
+      } while (
+        date.getUTCDay() !== 0 &&
+        date.getUTCDay() !== 6
+      );
+    }
+  }
+
+  do {
+    advanceOnce(localNext);
+  } while (
+    localNext.getTime() + offsetMs <=
+    Date.now()
+  );
+
+  const nextUtc =
+    new Date(
+      localNext.getTime() + offsetMs
+    );
+
+  if (!Number.isFinite(nextUtc.getTime())) {
+    return null;
+  }
+
+  return nextUtc.toISOString();
 }
 
 async function runDueScheduledPushes(env) {
@@ -2682,7 +2850,9 @@ async function runDueScheduledPushes(env) {
         target_url,
         link_text,
         scheduled_at,
-        attempts
+        attempts,
+        repeat_type,
+        timezone_offset_minutes
       FROM scheduled_push_notifications
       WHERE status = 'pending'
         AND scheduled_at <= ?
@@ -2771,19 +2941,54 @@ async function runDueScheduledPushes(env) {
         result &&
         result.success
       ) {
-        await env.DB.prepare(`
-          UPDATE scheduled_push_notifications
-          SET
-            status = 'sent',
-            sent_at = ?,
-            last_error = NULL
-          WHERE id = ?
-        `)
-        .bind(
-          new Date().toISOString(),
-          item.id
-        )
-        .run();
+        const deliveredAt =
+          new Date().toISOString();
+
+        const nextRun =
+          getNextRecurringDate(
+            item.scheduled_at,
+            item.repeat_type,
+            item.timezone_offset_minutes
+          );
+
+        if (nextRun) {
+          await env.DB.prepare(`
+            UPDATE scheduled_push_notifications
+            SET
+              status = 'pending',
+              scheduled_at = ?,
+              attempts = 0,
+              processing_at = NULL,
+              sent_at = ?,
+              last_error = NULL,
+              updated_at = ?
+            WHERE id = ?
+          `)
+          .bind(
+            nextRun,
+            deliveredAt,
+            deliveredAt,
+            item.id
+          )
+          .run();
+        } else {
+          await env.DB.prepare(`
+            UPDATE scheduled_push_notifications
+            SET
+              status = 'sent',
+              sent_at = ?,
+              processing_at = NULL,
+              last_error = NULL,
+              updated_at = ?
+            WHERE id = ?
+          `)
+          .bind(
+            deliveredAt,
+            deliveredAt,
+            item.id
+          )
+          .run();
+        }
       } else {
         throw new Error(
           result &&
@@ -2872,6 +3077,195 @@ async function handlePushAdminPage(
       );
     }
 
+    const adminAction =
+      cleanText(
+        body.action,
+        "send_or_schedule"
+      );
+
+    if (
+      adminAction === "list_schedules"
+    ) {
+      if (!env.DB) {
+        return databaseMissingResponse();
+      }
+
+      await ensureScheduledPushTable(env);
+
+      const scheduleRows =
+        await env.DB.prepare(`
+          SELECT
+            id,
+            title,
+            message,
+            target_url,
+            link_text,
+            scheduled_at,
+            repeat_type,
+            timezone_offset_minutes,
+            status,
+            attempts,
+            last_error,
+            created_at,
+            sent_at
+          FROM scheduled_push_notifications
+          WHERE status IN ('pending', 'processing', 'failed')
+          ORDER BY scheduled_at ASC
+          LIMIT 200
+        `).all();
+
+      return jsonResponse({
+        success: true,
+        event: "schedule_list",
+        schedules:
+          scheduleRows &&
+          Array.isArray(scheduleRows.results)
+            ? scheduleRows.results
+            : []
+      });
+    }
+
+    if (
+      adminAction === "delete_schedule"
+    ) {
+      if (!env.DB) {
+        return databaseMissingResponse();
+      }
+
+      await ensureScheduledPushTable(env);
+
+      const scheduleId =
+        Number(body.schedule_id);
+
+      if (
+        !Number.isInteger(scheduleId) ||
+        scheduleId <= 0
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Schedule ID durust nahi hai."
+          },
+          400
+        );
+      }
+
+      const deleted =
+        await env.DB.prepare(`
+          DELETE FROM scheduled_push_notifications
+          WHERE id = ?
+        `)
+        .bind(scheduleId)
+        .run();
+
+      return jsonResponse({
+        success: true,
+        event: "schedule_deleted",
+        schedule_id: scheduleId,
+        deleted:
+          Number(
+            deleted && deleted.meta
+              ? deleted.meta.changes || 0
+              : 0
+          ) === 1
+      });
+    }
+
+    if (
+      adminAction === "update_schedule"
+    ) {
+      if (!env.DB) {
+        return databaseMissingResponse();
+      }
+
+      await ensureScheduledPushTable(env);
+
+      const scheduleId =
+        Number(body.schedule_id);
+
+      const updatedDate =
+        new Date(
+          cleanText(body.schedule_at)
+        );
+
+      if (
+        !Number.isInteger(scheduleId) ||
+        scheduleId <= 0 ||
+        !Number.isFinite(updatedDate.getTime()) ||
+        updatedDate.getTime() <= Date.now() + 15000
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              "Schedule ID ya nayi date/time durust nahi hai."
+          },
+          400
+        );
+      }
+
+      const updatedTitle =
+        cleanText(body.title, "Imdade Rohani")
+          .slice(0, 120);
+
+      const updatedMessage =
+        cleanText(body.message)
+          .slice(0, 500);
+
+      if (!updatedMessage) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Notification message khali nahi ho sakta."
+          },
+          400
+        );
+      }
+
+      const updateResult =
+        await env.DB.prepare(`
+          UPDATE scheduled_push_notifications
+          SET
+            title = ?,
+            message = ?,
+            scheduled_at = ?,
+            repeat_type = ?,
+            timezone_offset_minutes = ?,
+            status = 'pending',
+            attempts = 0,
+            processing_at = NULL,
+            last_error = NULL,
+            updated_at = ?
+          WHERE id = ?
+        `)
+        .bind(
+          updatedTitle,
+          updatedMessage,
+          updatedDate.toISOString(),
+          normalizeRepeatType(body.repeat_type),
+          Number(body.timezone_offset_minutes || 0),
+          new Date().toISOString(),
+          scheduleId
+        )
+        .run();
+
+      return jsonResponse({
+        success: true,
+        event: "schedule_updated",
+        schedule_id: scheduleId,
+        updated:
+          Number(
+            updateResult && updateResult.meta
+              ? updateResult.meta.changes || 0
+              : 0
+          ) === 1,
+        scheduled_at:
+          updatedDate.toISOString(),
+        repeat_type:
+          normalizeRepeatType(body.repeat_type)
+      });
+    }
+
     const title =
       cleanText(
         body.title,
@@ -2924,6 +3318,11 @@ const scheduleAt =
   cleanText(
     body.schedule_at,
     ""
+  );
+
+const repeatType =
+  normalizeRepeatType(
+    body.repeat_type
   );
 
 /* =========================================
@@ -3038,7 +3437,11 @@ if (
             url: notificationTargetUrl,
             link_text: notificationButtonText,
             scheduled_at:
-              scheduledDate.toISOString()
+              scheduledDate.toISOString(),
+            repeat_type:
+              repeatType,
+            timezone_offset_minutes:
+              Number(body.timezone_offset_minutes || 0)
           }
         );
 
@@ -3050,7 +3453,9 @@ if (
           schedule_id:
             scheduled.id,
           scheduled_at:
-            scheduled.scheduled_at
+            scheduled.scheduled_at,
+          repeat_type:
+            repeatType
         },
         201
       );
@@ -3227,6 +3632,7 @@ label{
 }
 
 input,
+select,
 textarea{
   width:100%;
   border:
@@ -3239,6 +3645,7 @@ textarea{
 }
 
 input:focus,
+select:focus,
 textarea:focus{
   border-color:#002087;
   box-shadow:
@@ -3328,6 +3735,115 @@ textarea{
   margin-top:5px;
   text-align:left;
   direction:ltr;
+}
+
+.repeat-select{
+  min-height:54px;
+  font-weight:800;
+  color:#153574;
+  background:#f4f8ff;
+  box-shadow:0 8px 20px rgba(0,32,135,.16);
+}
+
+.summary-btn{
+  width:100%;
+  border:2px solid #0b318f;
+  border-radius:14px;
+  padding:14px;
+  margin-top:12px;
+  background:#eef4ff;
+  color:#0b318f;
+  font-size:16px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.schedule-modal{
+  display:none;
+  position:fixed;
+  inset:0;
+  z-index:99999;
+  padding:18px;
+  background:rgba(0,15,45,.72);
+  overflow:auto;
+}
+
+.schedule-modal.open{
+  display:block;
+}
+
+.modal-card{
+  width:100%;
+  max-width:720px;
+  margin:20px auto;
+  padding:18px;
+  border-radius:20px;
+  background:#fff;
+  box-shadow:0 20px 60px rgba(0,0,0,.35);
+}
+
+.modal-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:16px;
+}
+
+.modal-head h2{
+  margin:0;
+  color:#002087;
+  font-size:21px;
+}
+
+.modal-close{
+  border:0;
+  border-radius:50%;
+  width:40px;
+  height:40px;
+  background:#eef2f8;
+  color:#172033;
+  font-size:24px;
+  cursor:pointer;
+}
+
+.schedule-item{
+  margin:0 0 16px;
+  padding:15px;
+  border:1px solid #ccd5e5;
+  border-radius:16px;
+  background:#f9fbff;
+}
+
+.schedule-item-title{
+  margin-bottom:12px;
+  color:#002087;
+  font-weight:800;
+}
+
+.item-actions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+.item-update,
+.item-delete{
+  border:0;
+  border-radius:12px;
+  padding:12px;
+  color:#fff;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.item-update{background:#166534;}
+.item-delete{background:#b42318;}
+
+.empty-schedules{
+  padding:25px 10px;
+  text-align:center;
+  color:#667085;
 }
 
 </style>
@@ -3461,6 +3977,34 @@ textarea{
       />
     </div>
 
+    <div class="field">
+      <label for="repeatType">
+        🔁 Repeat
+      </label>
+
+      <select
+        class="repeat-select"
+        id="repeatType"
+      >
+        <option value="no_repeat">No Repeat</option>
+        <option value="hourly">Hourly</option>
+        <option value="daily">Daily</option>
+        <option value="weekly">Weekly</option>
+        <option value="monthly">Monthly</option>
+        <option value="yearly">Yearly</option>
+        <option value="weekdays">Weekdays</option>
+        <option value="weekend">Weekend</option>
+      </select>
+    </div>
+
+    <button
+      class="summary-btn"
+      id="summaryButton"
+      type="button"
+    >
+      📋 SUMMARY DEKHEIN
+    </button>
+
     <button
       class="schedule-btn"
       id="scheduleButton"
@@ -3485,6 +4029,29 @@ textarea{
 
   </div>
 
+</div>
+
+<div
+  class="schedule-modal"
+  id="scheduleModal"
+>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2>📋 Scheduled Notifications</h2>
+      <button
+        class="modal-close"
+        id="modalClose"
+        type="button"
+        aria-label="Close"
+      >×</button>
+    </div>
+
+    <div id="scheduleList">
+      <div class="empty-schedules">
+        Schedule list load ho rahi hai...
+      </div>
+    </div>
+  </div>
 </div>
 
 
@@ -3534,6 +4101,31 @@ var pushLinkCount = 0;
       "scheduleDateTime"
     );
 
+  var repeatType =
+    document.getElementById(
+      "repeatType"
+    );
+
+  var summaryButton =
+    document.getElementById(
+      "summaryButton"
+    );
+
+  var scheduleModal =
+    document.getElementById(
+      "scheduleModal"
+    );
+
+  var modalClose =
+    document.getElementById(
+      "modalClose"
+    );
+
+  var scheduleList =
+    document.getElementById(
+      "scheduleList"
+    );
+
   var resultBox =
     document.getElementById(
       "result"
@@ -3560,6 +4152,345 @@ var pushLinkCount = 0;
     localScheduleMinimum
       .toISOString()
       .slice(0, 16);
+
+  function toLocalInputValue(isoValue) {
+    var date = new Date(isoValue);
+
+    if (!Number.isFinite(date.getTime())) {
+      return "";
+    }
+
+    var localDate =
+      new Date(
+        date.getTime() -
+        date.getTimezoneOffset() * 60000
+      );
+
+    return localDate
+      .toISOString()
+      .slice(0, 16);
+  }
+
+  function makeField(
+    labelText,
+    element
+  ) {
+    var wrapper =
+      document.createElement("div");
+    wrapper.className = "field";
+
+    var label =
+      document.createElement("label");
+    label.textContent = labelText;
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(element);
+    return wrapper;
+  }
+
+  function makeRepeatSelect(value) {
+    var select =
+      document.createElement("select");
+    select.className = "item-repeat";
+
+    var repeatOptions = [
+      ["no_repeat", "No Repeat"],
+      ["hourly", "Hourly"],
+      ["daily", "Daily"],
+      ["weekly", "Weekly"],
+      ["monthly", "Monthly"],
+      ["yearly", "Yearly"],
+      ["weekdays", "Weekdays"],
+      ["weekend", "Weekend"]
+    ];
+
+    repeatOptions.forEach(
+      function(optionData){
+        var option =
+          document.createElement("option");
+        option.value = optionData[0];
+        option.textContent = optionData[1];
+        select.appendChild(option);
+      }
+    );
+
+    select.value = value || "no_repeat";
+    return select;
+  }
+
+  async function adminScheduleRequest(payload) {
+    var response =
+      await fetch(
+        "/api/push/admin",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(payload)
+        }
+      );
+
+    var data =
+      await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(
+        data.error ||
+        data.message ||
+        "Schedule request failed."
+      );
+    }
+
+    return data;
+  }
+
+  function renderScheduleList(schedules) {
+    scheduleList.innerHTML = "";
+
+    if (!schedules.length) {
+      var empty =
+        document.createElement("div");
+      empty.className = "empty-schedules";
+      empty.textContent =
+        "Koi scheduled notification mojood nahi hai.";
+      scheduleList.appendChild(empty);
+      return;
+    }
+
+    schedules.forEach(
+      function(schedule){
+        var item =
+          document.createElement("div");
+        item.className = "schedule-item";
+
+        var heading =
+          document.createElement("div");
+        heading.className =
+          "schedule-item-title";
+        heading.textContent =
+          "Schedule #" +
+          String(schedule.id) +
+          " — " +
+          String(schedule.status || "pending");
+        item.appendChild(heading);
+
+        var titleInput =
+          document.createElement("input");
+        titleInput.className = "item-title";
+        titleInput.maxLength = 120;
+        titleInput.value = schedule.title || "";
+        item.appendChild(
+          makeField("📝 Title", titleInput)
+        );
+
+        var messageInput =
+          document.createElement("textarea");
+        messageInput.className = "item-message";
+        messageInput.maxLength = 500;
+        messageInput.value = schedule.message || "";
+        item.appendChild(
+          makeField("💬 Message", messageInput)
+        );
+
+        var dateInput =
+          document.createElement("input");
+        dateInput.type = "datetime-local";
+        dateInput.className = "item-date";
+        dateInput.value =
+          toLocalInputValue(
+            schedule.scheduled_at
+          );
+        item.appendChild(
+          makeField(
+            "📅 Next Date aur Time",
+            dateInput
+          )
+        );
+
+        var itemRepeat =
+          makeRepeatSelect(
+            schedule.repeat_type
+          );
+        item.appendChild(
+          makeField("🔁 Repeat", itemRepeat)
+        );
+
+        var actions =
+          document.createElement("div");
+        actions.className = "item-actions";
+
+        var updateButton =
+          document.createElement("button");
+        updateButton.type = "button";
+        updateButton.className = "item-update";
+        updateButton.textContent = "✅ UPDATE";
+
+        var deleteButton =
+          document.createElement("button");
+        deleteButton.type = "button";
+        deleteButton.className = "item-delete";
+        deleteButton.textContent = "🗑 DELETE";
+
+        updateButton.addEventListener(
+          "click",
+          async function(){
+            var selected =
+              new Date(dateInput.value);
+
+            if (
+              !dateInput.value ||
+              !Number.isFinite(selected.getTime()) ||
+              selected.getTime() <= Date.now() + 15000
+            ) {
+              window.alert(
+                "Nayi date aur time future mein select karein."
+              );
+              return;
+            }
+
+            updateButton.disabled = true;
+            updateButton.textContent =
+              "Updating...";
+
+            try {
+              await adminScheduleRequest({
+                action: "update_schedule",
+                key: adminKey.value.trim(),
+                schedule_id: schedule.id,
+                title: titleInput.value.trim(),
+                message: messageInput.value.trim(),
+                schedule_at:
+                  selected.toISOString(),
+                repeat_type:
+                  itemRepeat.value,
+                timezone_offset_minutes:
+                  new Date().getTimezoneOffset()
+              });
+
+              window.alert(
+                "Schedule successfully update ho gaya."
+              );
+              await loadSchedules();
+            } catch(error) {
+              window.alert(
+                error && error.message
+                  ? error.message
+                  : String(error)
+              );
+            } finally {
+              updateButton.disabled = false;
+              updateButton.textContent =
+                "✅ UPDATE";
+            }
+          }
+        );
+
+        deleteButton.addEventListener(
+          "click",
+          async function(){
+            if (
+              !window.confirm(
+                "Kya aap Schedule #" +
+                String(schedule.id) +
+                " delete karna chahte hain?"
+              )
+            ) {
+              return;
+            }
+
+            deleteButton.disabled = true;
+
+            try {
+              await adminScheduleRequest({
+                action: "delete_schedule",
+                key: adminKey.value.trim(),
+                schedule_id: schedule.id
+              });
+              await loadSchedules();
+            } catch(error) {
+              window.alert(
+                error && error.message
+                  ? error.message
+                  : String(error)
+              );
+              deleteButton.disabled = false;
+            }
+          }
+        );
+
+        actions.appendChild(updateButton);
+        actions.appendChild(deleteButton);
+        item.appendChild(actions);
+        scheduleList.appendChild(item);
+      }
+    );
+  }
+
+  async function loadSchedules() {
+    var key =
+      adminKey.value.trim();
+
+    if (!key) {
+      scheduleModal.classList.remove("open");
+      showResult(
+        "error",
+        "Summary dekhne ke liye pehle Admin Key likhein."
+      );
+      return;
+    }
+
+    scheduleList.innerHTML =
+      '<div class="empty-schedules">Schedule list load ho rahi hai...</div>';
+
+    try {
+      var data =
+        await adminScheduleRequest({
+          action: "list_schedules",
+          key: key
+        });
+
+      renderScheduleList(
+        Array.isArray(data.schedules)
+          ? data.schedules
+          : []
+      );
+    } catch(error) {
+      scheduleList.innerHTML = "";
+      var failed =
+        document.createElement("div");
+      failed.className = "empty-schedules";
+      failed.textContent =
+        error && error.message
+          ? error.message
+          : String(error);
+      scheduleList.appendChild(failed);
+    }
+  }
+
+  summaryButton.addEventListener(
+    "click",
+    function(){
+      scheduleModal.classList.add("open");
+      loadSchedules();
+    }
+  );
+
+  modalClose.addEventListener(
+    "click",
+    function(){
+      scheduleModal.classList.remove("open");
+    }
+  );
+
+  scheduleModal.addEventListener(
+    "click",
+    function(event){
+      if (event.target === scheduleModal) {
+        scheduleModal.classList.remove("open");
+      }
+    }
+  );
 
 
   pushMessage.addEventListener(
@@ -3859,7 +4790,13 @@ link_text3:
   linkText3,
 
 schedule_at:
-  scheduleAt
+  scheduleAt,
+
+repeat_type:
+  repeatType.value,
+
+timezone_offset_minutes:
+  new Date().getTimezoneOffset()
                 })
             }
           );
@@ -3886,7 +4823,9 @@ schedule_at:
               "\\nDate/Time: " +
               new Date(
                 data.scheduled_at
-              ).toLocaleString()
+              ).toLocaleString() +
+              "\nRepeat: " +
+              String(data.repeat_type || "no_repeat")
             );
 
             scheduleDateTime.value = "";
