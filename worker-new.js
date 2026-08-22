@@ -438,7 +438,22 @@ if (path === "/notification-bell.png") {
      ============================================= */
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(runDailyInactiveCheck(env));
+    if (
+      controller &&
+      controller.cron === "* * * * *"
+    ) {
+      ctx.waitUntil(
+        runDueScheduledPushes(env)
+      );
+      return;
+    }
+
+    ctx.waitUntil(
+      Promise.all([
+        runDueScheduledPushes(env),
+        runDailyInactiveCheck(env)
+      ])
+    );
   }
 };
 
@@ -2559,6 +2574,260 @@ async function createNotificationOptionPage(
    NOTIFICATION OPTION PAGE HELPER END
    ========================================================= */
 
+async function ensureScheduledPushTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS scheduled_push_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      target_url TEXT,
+      link_text TEXT,
+      scheduled_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      processing_at TEXT,
+      sent_at TEXT
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_scheduled_push_due
+    ON scheduled_push_notifications
+    (status, scheduled_at)
+  `).run();
+}
+
+async function saveScheduledPush(env, data) {
+  if (!env.DB) {
+    throw new Error(
+      "D1 DB scheduled notification ke liye available nahi hai."
+    );
+  }
+
+  await ensureScheduledPushTable(env);
+
+  const createdAt =
+    new Date().toISOString();
+
+  const result =
+    await env.DB.prepare(`
+      INSERT INTO scheduled_push_notifications (
+        title,
+        message,
+        target_url,
+        link_text,
+        scheduled_at,
+        status,
+        attempts,
+        created_at
+      ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?)
+    `)
+    .bind(
+      data.title,
+      data.message,
+      data.url || "",
+      data.link_text || "",
+      data.scheduled_at,
+      createdAt
+    )
+    .run();
+
+  return {
+    id:
+      result && result.meta
+        ? result.meta.last_row_id
+        : null,
+    scheduled_at:
+      data.scheduled_at
+  };
+}
+
+async function runDueScheduledPushes(env) {
+  if (
+    !env ||
+    !env.DB ||
+    !env.PWA_ADMIN_KEY
+  ) {
+    return;
+  }
+
+  await ensureScheduledPushTable(env);
+
+  const now =
+    new Date().toISOString();
+
+  const staleProcessing =
+    new Date(
+      Date.now() - 10 * 60 * 1000
+    ).toISOString();
+
+  await env.DB.prepare(`
+    UPDATE scheduled_push_notifications
+    SET status = 'pending', processing_at = NULL
+    WHERE status = 'processing'
+      AND processing_at < ?
+      AND attempts < 3
+  `)
+  .bind(staleProcessing)
+  .run();
+
+  const dueResult =
+    await env.DB.prepare(`
+      SELECT
+        id,
+        title,
+        message,
+        target_url,
+        link_text,
+        scheduled_at,
+        attempts
+      FROM scheduled_push_notifications
+      WHERE status = 'pending'
+        AND scheduled_at <= ?
+        AND attempts < 3
+      ORDER BY scheduled_at ASC
+      LIMIT 10
+    `)
+    .bind(now)
+    .all();
+
+  const dueRows =
+    dueResult &&
+    Array.isArray(dueResult.results)
+      ? dueResult.results
+      : [];
+
+  for (const item of dueRows) {
+    const claim =
+      await env.DB.prepare(`
+        UPDATE scheduled_push_notifications
+        SET
+          status = 'processing',
+          processing_at = ?,
+          attempts = attempts + 1
+        WHERE id = ?
+          AND status = 'pending'
+      `)
+      .bind(now, item.id)
+      .run();
+
+    if (
+      !claim ||
+      !claim.meta ||
+      Number(claim.meta.changes || 0) !== 1
+    ) {
+      continue;
+    }
+
+    try {
+      const internalUrl =
+        new URL(
+          SITE_ORIGIN +
+          "/api/push/broadcast"
+        );
+
+      internalUrl.searchParams.set(
+        "key",
+        String(env.PWA_ADMIN_KEY)
+      );
+      internalUrl.searchParams.set(
+        "title",
+        String(item.title || "Imdade Rohani")
+      );
+      internalUrl.searchParams.set(
+        "body",
+        String(item.message || "")
+      );
+      internalUrl.searchParams.set(
+        "url",
+        String(item.target_url || "")
+      );
+      internalUrl.searchParams.set(
+        "link_text",
+        String(item.link_text || "")
+      );
+
+      const response =
+        await handlePushBroadcast(
+          new Request(
+            internalUrl.toString(),
+            { method: "GET" }
+          ),
+          env
+        );
+
+      let result = null;
+      try {
+        result =
+          await response.clone().json();
+      } catch (error) {
+        result = null;
+      }
+
+      if (
+        response.ok &&
+        result &&
+        result.success
+      ) {
+        await env.DB.prepare(`
+          UPDATE scheduled_push_notifications
+          SET
+            status = 'sent',
+            sent_at = ?,
+            last_error = NULL
+          WHERE id = ?
+        `)
+        .bind(
+          new Date().toISOString(),
+          item.id
+        )
+        .run();
+      } else {
+        throw new Error(
+          result &&
+          (result.error || result.message)
+            ? String(
+                result.error || result.message
+              )
+            : "Scheduled broadcast failed."
+        );
+      }
+    } catch (error) {
+      const nextStatus =
+        Number(item.attempts || 0) + 1 >= 3
+          ? "failed"
+          : "pending";
+
+      await env.DB.prepare(`
+        UPDATE scheduled_push_notifications
+        SET
+          status = ?,
+          processing_at = NULL,
+          last_error = ?
+        WHERE id = ?
+      `)
+      .bind(
+        nextStatus,
+        error && error.message
+          ? error.message.slice(0, 500)
+          : String(error).slice(0, 500),
+        item.id
+      )
+      .run();
+
+      console.log(
+        "Scheduled push failed:",
+        item.id,
+        error && error.message
+          ? error.message
+          : String(error)
+      );
+    }
+  }
+}
+
 async function handlePushAdminPage(
   request,
   env
@@ -2651,6 +2920,12 @@ const linkText3 =
     ""
   ).slice(0, 40);
 
+const scheduleAt =
+  cleanText(
+    body.schedule_at,
+    ""
+  );
+
 /* =========================================
    SINGLE LINK / MULTI LINK FINAL TARGET
    ========================================= */
@@ -2718,6 +2993,68 @@ if (
   notificationButtonText =
     "Options Dekhein";
 }
+
+    /* Calendar se future date/time diya gaya ho to
+       notification abhi bhejne ke bajaye D1 mein save hogi. */
+    if (scheduleAt) {
+      const scheduledDate =
+        new Date(scheduleAt);
+
+      if (
+        !Number.isFinite(
+          scheduledDate.getTime()
+        )
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              "Notification ki date ya time durust nahi hai."
+          },
+          400
+        );
+      }
+
+      if (
+        scheduledDate.getTime() <=
+        Date.now() + 15000
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              "Schedule ka waqt kam az kam 1 minute aage rakhein."
+          },
+          400
+        );
+      }
+
+      const scheduled =
+        await saveScheduledPush(
+          env,
+          {
+            title: title,
+            message: message,
+            url: notificationTargetUrl,
+            link_text: notificationButtonText,
+            scheduled_at:
+              scheduledDate.toISOString()
+          }
+        );
+
+      return jsonResponse(
+        {
+          success: true,
+          event:
+            "notification_scheduled",
+          schedule_id:
+            scheduled.id,
+          scheduled_at:
+            scheduled.scheduled_at
+        },
+        201
+      );
+    }
      
     /*
      * Existing Part 5 Broadcast function
@@ -2927,6 +3264,24 @@ textarea{
   margin-top:5px;
 }
 
+.schedule-btn{
+  width:100%;
+  border:2px solid #d49a16;
+  border-radius:14px;
+  padding:15px;
+  background:#fff8dc;
+  color:#7a4b00;
+  font-size:17px;
+  font-weight:800;
+  cursor:pointer;
+  margin-top:12px;
+}
+
+.schedule-btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+
 .send-btn:disabled{
   opacity:.55;
   cursor:not-allowed;
@@ -3095,6 +3450,25 @@ textarea{
       📢 SAB USERS KO NOTIFICATION BHEJEIN
     </button>
 
+    <div class="field" style="margin-top:20px;">
+      <label for="scheduleDateTime">
+        📅 Notification ki Date aur Time
+      </label>
+
+      <input
+        id="scheduleDateTime"
+        type="datetime-local"
+      />
+    </div>
+
+    <button
+      class="schedule-btn"
+      id="scheduleButton"
+      type="button"
+    >
+      📅 DATE AUR TIME PAR SET KAREIN
+    </button>
+
 
     <div
       id="result"
@@ -3150,6 +3524,16 @@ var pushLinkCount = 0;
       "sendButton"
     );
 
+  var scheduleButton =
+    document.getElementById(
+      "scheduleButton"
+    );
+
+  var scheduleDateTime =
+    document.getElementById(
+      "scheduleDateTime"
+    );
+
   var resultBox =
     document.getElementById(
       "result"
@@ -3159,6 +3543,23 @@ var pushLinkCount = 0;
     document.getElementById(
       "counter"
     );
+
+  var minimumScheduleDate =
+    new Date(Date.now() + 60000);
+
+  minimumScheduleDate.setSeconds(0, 0);
+
+  var localScheduleMinimum =
+    new Date(
+      minimumScheduleDate.getTime() -
+      minimumScheduleDate.getTimezoneOffset() *
+      60000
+    );
+
+  scheduleDateTime.min =
+    localScheduleMinimum
+      .toISOString()
+      .slice(0, 16);
 
 
   pushMessage.addEventListener(
@@ -3264,9 +3665,9 @@ addPushLinkButton.addEventListener(
   }
 
 
-  sendButton.addEventListener(
-    "click",
-    async function(){
+  async function submitNotification(
+    scheduleMode
+  ) {
 
       var key =
         adminKey.value.trim();
@@ -3351,9 +3752,45 @@ if (urlFields.length >= 3) {
         return;
       }
 
+      var scheduleAt = "";
+
+      if (scheduleMode) {
+        if (!scheduleDateTime.value) {
+          showResult(
+            "error",
+            "Calendar se notification ki date aur time select karein."
+          );
+          return;
+        }
+
+        var selectedDate =
+          new Date(
+            scheduleDateTime.value
+          );
+
+        if (
+          !Number.isFinite(
+            selectedDate.getTime()
+          ) ||
+          selectedDate.getTime() <=
+            Date.now() + 15000
+        ) {
+          showResult(
+            "error",
+            "Date aur time kam az kam 1 minute aage select karein."
+          );
+          return;
+        }
+
+        scheduleAt =
+          selectedDate.toISOString();
+      }
+
       var confirmed =
         window.confirm(
-          "Kya aap ye notification sab active users ko bhejna chahte hain?"
+          scheduleMode
+            ? "Kya aap ye notification chuni hui date aur time par set karna chahte hain?"
+            : "Kya aap ye notification sab active users ko abhi bhejna chahte hain?"
         );
 
 
@@ -3362,11 +3799,18 @@ if (urlFields.length >= 3) {
       }
 
 
-      sendButton.disabled =
+      var activeButton =
+        scheduleMode
+          ? scheduleButton
+          : sendButton;
+
+      activeButton.disabled =
         true;
 
-      sendButton.textContent =
-        "Notification bheji ja rahi hai...";
+      activeButton.textContent =
+        scheduleMode
+          ? "Notification set ho rahi hai..."
+          : "Notification bheji ja rahi hai...";
 
       resultBox.className =
         "result";
@@ -3412,7 +3856,10 @@ url3:
   url3,
 
 link_text3:
-  linkText3
+  linkText3,
+
+schedule_at:
+  scheduleAt
                 })
             }
           );
@@ -3427,31 +3874,49 @@ link_text3:
           data.success
         ) {
 
-          showResult(
-            "success",
+          if (
+            data.event ===
+              "notification_scheduled"
+          ) {
+            showResult(
+              "success",
+              "✅ Notification calendar mein successfully set ho gayi.\\n\\n" +
+              "Schedule ID: " +
+              String(data.schedule_id || "-") +
+              "\\nDate/Time: " +
+              new Date(
+                data.scheduled_at
+              ).toLocaleString()
+            );
 
-            "✅ Notification successfully bhej di gayi.\\n\\n" +
+            scheduleDateTime.value = "";
+          } else {
+            showResult(
+              "success",
 
-            "Kul Active Tokens: " +
-            String(
-              data.total_active_tokens || 0
-            ) +
+              "✅ Notification successfully bhej di gayi.\\n\\n" +
 
-            "\\nSuccessfully Sent: " +
-            String(
-              data.successfully_sent || 0
-            ) +
+              "Kul Active Tokens: " +
+              String(
+                data.total_active_tokens || 0
+              ) +
 
-            "\\nFailed: " +
-            String(
-              data.failed || 0
-            ) +
+              "\\nSuccessfully Sent: " +
+              String(
+                data.successfully_sent || 0
+              ) +
 
-            "\\nInvalid Tokens Band: " +
-            String(
-              data.invalid_tokens_deactivated || 0
-            )
-          );
+              "\\nFailed: " +
+              String(
+                data.failed || 0
+              ) +
+
+              "\\nInvalid Tokens Band: " +
+              String(
+                data.invalid_tokens_deactivated || 0
+              )
+            );
+          }
 
 
           pushMessage.value =
@@ -3493,14 +3958,29 @@ link_text3:
 
       } finally {
 
-        sendButton.disabled =
+        activeButton.disabled =
           false;
 
-        sendButton.textContent =
-          "📢 SAB USERS KO NOTIFICATION BHEJEIN";
+        activeButton.textContent =
+          scheduleMode
+            ? "📅 DATE AUR TIME PAR SET KAREIN"
+            : "📢 SAB USERS KO NOTIFICATION BHEJEIN";
 
       }
 
+    }
+
+  sendButton.addEventListener(
+    "click",
+    function(){
+      submitNotification(false);
+    }
+  );
+
+  scheduleButton.addEventListener(
+    "click",
+    function(){
+      submitNotification(true);
     }
   );
 
