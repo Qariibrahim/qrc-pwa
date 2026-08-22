@@ -3109,7 +3109,7 @@ async function handlePushAdminPage(
             created_at,
             sent_at
           FROM scheduled_push_notifications
-          WHERE status IN ('pending', 'processing', 'failed')
+          WHERE status IN ('pending', 'processing', 'failed', 'sent')
           ORDER BY scheduled_at ASC
           LIMIT 200
         `).all();
@@ -3846,6 +3846,33 @@ textarea{
   color:#667085;
 }
 
+.schedule-summary-button{
+  width:100%;
+  min-height:64px;
+  margin:0 0 12px;
+  padding:14px 18px;
+  border:0;
+  border-radius:14px;
+  color:#fff;
+  font-size:17px;
+  font-weight:800;
+  cursor:pointer;
+  box-shadow:0 8px 20px rgba(0,0,0,.16);
+}
+
+.schedule-summary-button.pending,
+.schedule-summary-button.processing{
+  background:#15803d;
+}
+
+.schedule-summary-button.failed{
+  background:#c5221f;
+}
+
+.schedule-summary-button.sent{
+  background:#7b8494;
+}
+
 </style>
 
 </head>
@@ -4037,7 +4064,7 @@ textarea{
 >
   <div class="modal-card">
     <div class="modal-head">
-      <h2>📋 Scheduled Notifications</h2>
+      <h2 id="modalTitle">📋 Scheduled Notifications</h2>
       <button
         class="modal-close"
         id="modalClose"
@@ -4119,6 +4146,11 @@ var pushLinkCount = 0;
   var modalClose =
     document.getElementById(
       "modalClose"
+    );
+
+  var modalTitle =
+    document.getElementById(
+      "modalTitle"
     );
 
   var scheduleList =
@@ -4245,7 +4277,7 @@ var pushLinkCount = 0;
     return data;
   }
 
-  function renderScheduleList(schedules) {
+  function renderScheduleEditor(schedules) {
     scheduleList.innerHTML = "";
 
     if (!schedules.length) {
@@ -4423,6 +4455,67 @@ var pushLinkCount = 0;
         actions.appendChild(deleteButton);
         item.appendChild(actions);
         scheduleList.appendChild(item);
+      }
+    );
+  }
+
+  function renderScheduleList(schedules) {
+    scheduleList.innerHTML = "";
+
+    modalTitle.textContent =
+      "📋 Scheduled Notifications";
+
+    if (!schedules.length) {
+      var empty =
+        document.createElement("div");
+      empty.className = "empty-schedules";
+      empty.textContent =
+        "Koi scheduled notification mojood nahi hai.";
+      scheduleList.appendChild(empty);
+      return;
+    }
+
+    schedules.forEach(
+      function(schedule){
+        var editButton =
+          document.createElement("button");
+
+        var status =
+          String(schedule.status || "pending")
+            .toLowerCase();
+
+        if (
+          status !== "pending" &&
+          status !== "processing" &&
+          status !== "failed" &&
+          status !== "sent"
+        ) {
+          status = "pending";
+        }
+
+        editButton.type = "button";
+        editButton.className =
+          "schedule-summary-button " +
+          status;
+        editButton.textContent =
+          "✏️ EDIT NOTIFICATION";
+        editButton.setAttribute(
+          "aria-label",
+          "Edit Schedule " +
+          String(schedule.id) +
+          " " + status
+        );
+
+        editButton.addEventListener(
+          "click",
+          function(){
+            modalTitle.textContent =
+              "✏️ Edit Notification";
+            renderScheduleEditor([schedule]);
+          }
+        );
+
+        scheduleList.appendChild(editButton);
       }
     );
   }
