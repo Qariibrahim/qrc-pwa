@@ -9340,12 +9340,31 @@ const completedUpdateVersion =
     "irPwaCompletedUpdateVersion"
   );
 
+/*
+  D1 / installed version is the final source of truth.
+  A stale completed-update marker must never hide a real update.
+*/
 if (
   completedUpdateVersion &&
   String(completedUpdateVersion) ===
+    String(data.latest_version) &&
+  installedVersion &&
+  String(installedVersion) ===
     String(data.latest_version)
 ) {
   return;
+}
+
+if (
+  completedUpdateVersion &&
+  String(completedUpdateVersion) ===
+    String(data.latest_version) &&
+  String(installedVersion) !==
+    String(data.latest_version)
+) {
+  localStorage.removeItem(
+    "irPwaCompletedUpdateVersion"
+  );
 }
 
       showPwaUpdatePopup(data);
