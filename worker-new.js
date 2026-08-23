@@ -3144,6 +3144,111 @@ async function handlePushAdminPage(
     }
 
     if (
+      adminAction === "copy_schedule"
+    ) {
+      if (!env.DB) {
+        return databaseMissingResponse();
+      }
+
+      await ensureScheduledPushTable(env);
+
+      const sourceId =
+        Number(body.schedule_id);
+
+      if (
+        !Number.isInteger(sourceId) ||
+        sourceId <= 0
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Copy ke liye Schedule ID durust nahi hai."
+          },
+          400
+        );
+      }
+
+      const copiedAt =
+        new Date().toISOString();
+
+      const copied =
+        await env.DB.prepare(`
+          INSERT INTO scheduled_push_notifications (
+            title,
+            message,
+            target_url,
+            link_text,
+            scheduled_at,
+            status,
+            attempts,
+            last_error,
+            created_at,
+            processing_at,
+            sent_at,
+            repeat_type,
+            updated_at,
+            timezone_offset_minutes,
+            link_data
+          )
+          SELECT
+            title,
+            message,
+            target_url,
+            link_text,
+            scheduled_at,
+            'draft',
+            0,
+            NULL,
+            ?,
+            NULL,
+            NULL,
+            repeat_type,
+            ?,
+            timezone_offset_minutes,
+            link_data
+          FROM scheduled_push_notifications
+          WHERE id = ?
+        `)
+        .bind(
+          copiedAt,
+          copiedAt,
+          sourceId
+        )
+        .run();
+
+      const changes =
+        Number(
+          copied && copied.meta
+            ? copied.meta.changes || 0
+            : 0
+        );
+
+      if (changes !== 1) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Jis notification ko copy karna hai woh nahi mili."
+          },
+          404
+        );
+      }
+
+      return jsonResponse(
+        {
+          success: true,
+          event: "schedule_copied",
+          source_schedule_id: sourceId,
+          schedule_id:
+            copied && copied.meta
+              ? copied.meta.last_row_id
+              : null,
+          status: "draft"
+        },
+        201
+      );
+    }
+
+    if (
       adminAction === "delete_schedule"
     ) {
       if (!env.DB) {
@@ -4210,7 +4315,7 @@ textarea{
 .schedule-summary-button{
   width:100%;
   min-height:64px;
-  margin:0 0 12px;
+  margin:0;
   padding:14px 18px;
   border:0;
   border-radius:14px;
@@ -4219,6 +4324,31 @@ textarea{
   font-weight:800;
   cursor:pointer;
   box-shadow:0 8px 20px rgba(0,0,0,.16);
+}
+
+.schedule-summary-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  gap:9px;
+  margin:0 0 12px;
+}
+
+.schedule-copy-button{
+  min-width:76px;
+  border:2px solid #0b318f;
+  border-radius:14px;
+  padding:10px;
+  background:#fff;
+  color:#0b318f;
+  font-size:14px;
+  font-weight:900;
+  cursor:pointer;
+  box-shadow:0 8px 20px rgba(0,0,0,.12);
+}
+
+.schedule-copy-button:disabled{
+  opacity:.55;
+  cursor:not-allowed;
 }
 
 .schedule-summary-button.pending,
@@ -5096,7 +5226,15 @@ var pushLinkCount = 0;
 
     schedules.forEach(
       function(schedule){
+        var summaryRow =
+          document.createElement("div");
+        summaryRow.className =
+          "schedule-summary-row";
+
         var editButton =
+          document.createElement("button");
+
+        var copyButton =
           document.createElement("button");
 
         var status =
@@ -5139,7 +5277,59 @@ var pushLinkCount = 0;
           }
         );
 
-        scheduleList.appendChild(editButton);
+        copyButton.type = "button";
+        copyButton.className =
+          "schedule-copy-button";
+        copyButton.textContent = "COPY";
+        copyButton.setAttribute(
+          "aria-label",
+          "Copy Schedule " +
+          String(schedule.id)
+        );
+
+        copyButton.addEventListener(
+          "click",
+          async function(){
+            if (
+              !window.confirm(
+                "Kya aap is notification ki mukammal copy Draft mein banana chahte hain?"
+              )
+            ) {
+              return;
+            }
+
+            copyButton.disabled = true;
+            copyButton.textContent = "...";
+
+            try {
+              var copied =
+                await adminScheduleRequest({
+                  action: "copy_schedule",
+                  key: adminKey.value.trim(),
+                  schedule_id: schedule.id
+                });
+
+              window.alert(
+                "Notification ki copy EDIT DRAFT ke roop mein ban gayi. Draft ID: " +
+                String(copied.schedule_id || "-")
+              );
+              await loadSchedules();
+            } catch(error) {
+              window.alert(
+                error && error.message
+                  ? error.message
+                  : String(error)
+              );
+            } finally {
+              copyButton.disabled = false;
+              copyButton.textContent = "COPY";
+            }
+          }
+        );
+
+        summaryRow.appendChild(editButton);
+        summaryRow.appendChild(copyButton);
+        scheduleList.appendChild(summaryRow);
       }
     );
   }
