@@ -9607,9 +9607,15 @@ fetch(
           )
         );
 
-        window.location.href =
+        /*
+          Replace the current history entry instead of adding a new one.
+          This prevents Back from restoring the old "update in progress"
+          popup after a successful update.
+        */
+        window.location.replace(
           data.update_url ||
-          "/?pwa_update=1";
+          "/?pwa_update=1"
+        );
       }
     );
 
