@@ -2663,7 +2663,7 @@ async function saveScheduledPush(env, data) {
         repeat_type,
         updated_at,
         timezone_offset_minutes
-      ) VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
     `)
     .bind(
       data.title,
@@ -2671,6 +2671,9 @@ async function saveScheduledPush(env, data) {
       data.url || "",
       data.link_text || "",
       data.scheduled_at,
+      data.status === "draft"
+        ? "draft"
+        : "pending",
       createdAt,
       normalizeRepeatType(data.repeat_type),
       createdAt,
@@ -3109,7 +3112,7 @@ async function handlePushAdminPage(
             created_at,
             sent_at
           FROM scheduled_push_notifications
-          WHERE status IN ('pending', 'processing', 'failed', 'sent')
+          WHERE status IN ('draft', 'pending', 'processing', 'failed', 'sent')
           ORDER BY scheduled_at ASC
           LIMIT 200
         `).all();
@@ -3188,11 +3191,17 @@ async function handlePushAdminPage(
           cleanText(body.schedule_at)
         );
 
+      const saveAsDraft =
+        body.save_as_draft === true;
+
       if (
         !Number.isInteger(scheduleId) ||
         scheduleId <= 0 ||
         !Number.isFinite(updatedDate.getTime()) ||
-        updatedDate.getTime() <= Date.now() + 15000
+        (
+          !saveAsDraft &&
+          updatedDate.getTime() <= Date.now() + 15000
+        )
       ) {
         return jsonResponse(
           {
@@ -3231,7 +3240,7 @@ async function handlePushAdminPage(
             scheduled_at = ?,
             repeat_type = ?,
             timezone_offset_minutes = ?,
-            status = 'pending',
+            status = ?,
             attempts = 0,
             processing_at = NULL,
             last_error = NULL,
@@ -3244,6 +3253,7 @@ async function handlePushAdminPage(
           updatedDate.toISOString(),
           normalizeRepeatType(body.repeat_type),
           Number(body.timezone_offset_minutes || 0),
+          saveAsDraft ? "draft" : "pending",
           new Date().toISOString(),
           scheduleId
         )
@@ -3262,7 +3272,170 @@ async function handlePushAdminPage(
         scheduled_at:
           updatedDate.toISOString(),
         repeat_type:
-          normalizeRepeatType(body.repeat_type)
+          normalizeRepeatType(body.repeat_type),
+        status:
+          saveAsDraft ? "draft" : "pending"
+      });
+    }
+
+    if (
+      adminAction === "send_schedule_now"
+    ) {
+      if (!env.DB) {
+        return databaseMissingResponse();
+      }
+
+      await ensureScheduledPushTable(env);
+
+      const scheduleId =
+        Number(body.schedule_id);
+
+      if (
+        !Number.isInteger(scheduleId) ||
+        scheduleId <= 0
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Schedule ID durust nahi hai."
+          },
+          400
+        );
+      }
+
+      const storedSchedule =
+        await env.DB.prepare(`
+          SELECT
+            id,
+            title,
+            message,
+            target_url,
+            link_text
+          FROM scheduled_push_notifications
+          WHERE id = ?
+          LIMIT 1
+        `)
+        .bind(scheduleId)
+        .first();
+
+      if (!storedSchedule) {
+        return jsonResponse(
+          {
+            success: false,
+            error: "Notification record nahi mili."
+          },
+          404
+        );
+      }
+
+      const sendTitle =
+        cleanText(
+          body.title,
+          storedSchedule.title || "Imdade Rohani"
+        ).slice(0, 120);
+
+      const sendMessage =
+        cleanText(
+          body.message,
+          storedSchedule.message || ""
+        ).slice(0, 500);
+
+      const internalUrl =
+        new URL(
+          SITE_ORIGIN +
+          "/api/push/broadcast"
+        );
+
+      internalUrl.searchParams.set(
+        "key",
+        adminKey
+      );
+      internalUrl.searchParams.set(
+        "title",
+        sendTitle
+      );
+      internalUrl.searchParams.set(
+        "body",
+        sendMessage
+      );
+      internalUrl.searchParams.set(
+        "url",
+        String(storedSchedule.target_url || "")
+      );
+      internalUrl.searchParams.set(
+        "link_text",
+        String(storedSchedule.link_text || "")
+      );
+
+      const sendResponse =
+        await handlePushBroadcast(
+          new Request(
+            internalUrl.toString(),
+            { method: "GET" }
+          ),
+          env
+        );
+
+      let sendResult = null;
+      try {
+        sendResult =
+          await sendResponse.clone().json();
+      } catch (error) {
+        sendResult = null;
+      }
+
+      if (
+        !sendResponse.ok ||
+        !sendResult ||
+        !sendResult.success
+      ) {
+        return jsonResponse(
+          {
+            success: false,
+            error:
+              sendResult &&
+              (sendResult.error || sendResult.message)
+                ? sendResult.error || sendResult.message
+                : "Notification abhi send nahi ho saki."
+          },
+          sendResponse.status || 500
+        );
+      }
+
+      const sentAt =
+        new Date().toISOString();
+
+      await env.DB.prepare(`
+        UPDATE scheduled_push_notifications
+        SET
+          title = ?,
+          message = ?,
+          status = 'sent',
+          sent_at = ?,
+          processing_at = NULL,
+          attempts = 0,
+          last_error = NULL,
+          updated_at = ?
+        WHERE id = ?
+      `)
+      .bind(
+        sendTitle,
+        sendMessage,
+        sentAt,
+        sentAt,
+        scheduleId
+      )
+      .run();
+
+      return jsonResponse({
+        success: true,
+        event: "schedule_sent_now",
+        schedule_id: scheduleId,
+        sent_at: sentAt,
+        successfully_sent:
+          sendResult.successfully_sent || 0,
+        failed:
+          sendResult.failed || 0
       });
     }
 
@@ -3324,6 +3497,9 @@ const repeatType =
   normalizeRepeatType(
     body.repeat_type
   );
+
+const saveAsDraft =
+  body.save_as_draft === true;
 
 /* =========================================
    SINGLE LINK / MULTI LINK FINAL TARGET
@@ -3395,9 +3571,11 @@ if (
 
     /* Calendar se future date/time diya gaya ho to
        notification abhi bhejne ke bajaye D1 mein save hogi. */
-    if (scheduleAt) {
+    if (scheduleAt || saveAsDraft) {
       const scheduledDate =
-        new Date(scheduleAt);
+        scheduleAt
+          ? new Date(scheduleAt)
+          : new Date();
 
       if (
         !Number.isFinite(
@@ -3415,6 +3593,7 @@ if (
       }
 
       if (
+        !saveAsDraft &&
         scheduledDate.getTime() <=
         Date.now() + 15000
       ) {
@@ -3441,7 +3620,9 @@ if (
             repeat_type:
               repeatType,
             timezone_offset_minutes:
-              Number(body.timezone_offset_minutes || 0)
+              Number(body.timezone_offset_minutes || 0),
+            status:
+              saveAsDraft ? "draft" : "pending"
           }
         );
 
@@ -3449,13 +3630,17 @@ if (
         {
           success: true,
           event:
-            "notification_scheduled",
+            saveAsDraft
+              ? "notification_draft_saved"
+              : "notification_scheduled",
           schedule_id:
             scheduled.id,
           scheduled_at:
             scheduled.scheduled_at,
           repeat_type:
-            repeatType
+            repeatType,
+          status:
+            saveAsDraft ? "draft" : "pending"
         },
         201
       );
@@ -3737,6 +3922,36 @@ textarea{
   direction:ltr;
 }
 
+.message-meta-row{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-top:5px;
+}
+
+.message-meta-row .counter{
+  margin-top:0;
+}
+
+.draft-check-label{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  margin:0;
+  color:#0b318f;
+  font-size:13px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.draft-check-label input{
+  width:20px;
+  height:20px;
+  margin:0;
+  accent-color:#0b5ed7;
+}
+
 .repeat-select{
   min-height:54px;
   font-weight:800;
@@ -3823,12 +4038,14 @@ textarea{
 
 .item-actions{
   display:grid;
-  grid-template-columns:1fr 1fr;
+  grid-template-columns:repeat(3,1fr);
   gap:10px;
 }
 
 .item-update,
-.item-delete{
+.item-delete,
+.item-send,
+.item-live{
   border:0;
   border-radius:12px;
   padding:12px;
@@ -3839,6 +4056,12 @@ textarea{
 
 .item-update{background:#166534;}
 .item-delete{background:#b42318;}
+.item-send{background:#0b318f;}
+.item-live{
+  width:100%;
+  margin-top:10px;
+  background:#15803d;
+}
 
 .empty-schedules{
   padding:25px 10px;
@@ -3871,6 +4094,10 @@ textarea{
 
 .schedule-summary-button.sent{
   background:#7b8494;
+}
+
+.schedule-summary-button.draft{
+  background:#0b5ed7;
 }
 
 </style>
@@ -3951,11 +4178,21 @@ textarea{
         placeholder="Yahan notification message likhein"
       ></textarea>
 
-      <div
-        class="counter"
-        id="counter"
-      >
-        0 / 500
+      <div class="message-meta-row">
+        <div
+          class="counter"
+          id="counter"
+        >
+          0 / 500
+        </div>
+
+        <label class="draft-check-label">
+          <input
+            id="saveAsDraft"
+            type="checkbox"
+          />
+          Save Draft
+        </label>
       </div>
 
     </div>
@@ -4168,6 +4405,11 @@ var pushLinkCount = 0;
       "counter"
     );
 
+  var saveAsDraft =
+    document.getElementById(
+      "saveAsDraft"
+    );
+
   var minimumScheduleDate =
     new Date(Date.now() + 60000);
 
@@ -4364,6 +4606,12 @@ var pushLinkCount = 0;
         deleteButton.className = "item-delete";
         deleteButton.textContent = "🗑 DELETE";
 
+        var sendButtonNow =
+          document.createElement("button");
+        sendButtonNow.type = "button";
+        sendButtonNow.className = "item-send";
+        sendButtonNow.textContent = "📤 SEND";
+
         updateButton.addEventListener(
           "click",
           async function(){
@@ -4373,7 +4621,10 @@ var pushLinkCount = 0;
             if (
               !dateInput.value ||
               !Number.isFinite(selected.getTime()) ||
-              selected.getTime() <= Date.now() + 15000
+              (
+                schedule.status !== "draft" &&
+                selected.getTime() <= Date.now() + 15000
+              )
             ) {
               window.alert(
                 "Nayi date aur time future mein select karein."
@@ -4397,7 +4648,9 @@ var pushLinkCount = 0;
                 repeat_type:
                   itemRepeat.value,
                 timezone_offset_minutes:
-                  new Date().getTimezoneOffset()
+                  new Date().getTimezoneOffset(),
+                save_as_draft:
+                  schedule.status === "draft"
               });
 
               window.alert(
@@ -4451,9 +4704,98 @@ var pushLinkCount = 0;
           }
         );
 
-        actions.appendChild(updateButton);
+        sendButtonNow.addEventListener(
+          "click",
+          async function(){
+            if (!window.confirm("Kya aap ye notification abhi send karna chahte hain?")) {
+              return;
+            }
+
+            sendButtonNow.disabled = true;
+            sendButtonNow.textContent = "Sending...";
+
+            try {
+              await adminScheduleRequest({
+                action: "send_schedule_now",
+                key: adminKey.value.trim(),
+                schedule_id: schedule.id,
+                title: titleInput.value.trim(),
+                message: messageInput.value.trim()
+              });
+              window.alert("Notification abhi successfully send ho gayi.");
+              await loadSchedules();
+            } catch(error) {
+              window.alert(
+                error && error.message
+                  ? error.message
+                  : String(error)
+              );
+            } finally {
+              sendButtonNow.disabled = false;
+              sendButtonNow.textContent = "📤 SEND";
+            }
+          }
+        );
+
         actions.appendChild(deleteButton);
+        actions.appendChild(updateButton);
+        actions.appendChild(sendButtonNow);
         item.appendChild(actions);
+
+        if (schedule.status === "draft") {
+          var liveButton =
+            document.createElement("button");
+          liveButton.type = "button";
+          liveButton.className = "item-live";
+          liveButton.textContent = "🔴 LIVE";
+
+          liveButton.addEventListener(
+            "click",
+            async function(){
+              var selected = new Date(dateInput.value);
+
+              if (
+                !dateInput.value ||
+                !Number.isFinite(selected.getTime()) ||
+                selected.getTime() <= Date.now() + 15000
+              ) {
+                window.alert("Live karne ke liye future date aur time select karein.");
+                return;
+              }
+
+              liveButton.disabled = true;
+              liveButton.textContent = "Going Live...";
+
+              try {
+                await adminScheduleRequest({
+                  action: "update_schedule",
+                  key: adminKey.value.trim(),
+                  schedule_id: schedule.id,
+                  title: titleInput.value.trim(),
+                  message: messageInput.value.trim(),
+                  schedule_at: selected.toISOString(),
+                  repeat_type: itemRepeat.value,
+                  timezone_offset_minutes:
+                    new Date().getTimezoneOffset(),
+                  save_as_draft: false
+                });
+                window.alert("Draft Live ho gaya; notification muqarrarah waqt par send hogi.");
+                await loadSchedules();
+              } catch(error) {
+                window.alert(
+                  error && error.message
+                    ? error.message
+                    : String(error)
+                );
+              } finally {
+                liveButton.disabled = false;
+                liveButton.textContent = "🔴 LIVE";
+              }
+            }
+          );
+
+          item.appendChild(liveButton);
+        }
         scheduleList.appendChild(item);
       }
     );
@@ -4488,7 +4830,8 @@ var pushLinkCount = 0;
           status !== "pending" &&
           status !== "processing" &&
           status !== "failed" &&
-          status !== "sent"
+          status !== "sent" &&
+          status !== "draft"
         ) {
           status = "pending";
         }
@@ -4498,7 +4841,9 @@ var pushLinkCount = 0;
           "schedule-summary-button " +
           status;
         editButton.textContent =
-          "✏️ EDIT NOTIFICATION";
+          status === "draft"
+            ? "📝 EDIT DRAFT"
+            : "✏️ EDIT NOTIFICATION";
         editButton.setAttribute(
           "aria-label",
           "Edit Schedule " +
@@ -4510,7 +4855,9 @@ var pushLinkCount = 0;
           "click",
           function(){
             modalTitle.textContent =
-              "✏️ Edit Notification";
+              status === "draft"
+                ? "📝 Edit Draft"
+                : "✏️ Edit Notification";
             renderScheduleEditor([schedule]);
           }
         );
@@ -4693,6 +5040,9 @@ addPushLinkButton.addEventListener(
     scheduleMode
   ) {
 
+      var draftMode =
+        Boolean(saveAsDraft.checked);
+
       var key =
         adminKey.value.trim();
 
@@ -4778,7 +5128,7 @@ if (urlFields.length >= 3) {
 
       var scheduleAt = "";
 
-      if (scheduleMode) {
+      if (scheduleMode && !draftMode) {
         if (!scheduleDateTime.value) {
           showResult(
             "error",
@@ -4810,11 +5160,36 @@ if (urlFields.length >= 3) {
           selectedDate.toISOString();
       }
 
+      if (
+        draftMode &&
+        scheduleDateTime.value
+      ) {
+        var draftSelectedDate =
+          new Date(scheduleDateTime.value);
+
+        if (
+          !Number.isFinite(
+            draftSelectedDate.getTime()
+          )
+        ) {
+          showResult(
+            "error",
+            "Draft ki date aur time durust select karein."
+          );
+          return;
+        }
+
+        scheduleAt =
+          draftSelectedDate.toISOString();
+      }
+
       var confirmed =
         window.confirm(
-          scheduleMode
-            ? "Kya aap ye notification chuni hui date aur time par set karna chahte hain?"
-            : "Kya aap ye notification sab active users ko abhi bhejna chahte hain?"
+          draftMode
+            ? "Kya aap ye notification sirf Draft mein save karna chahte hain? Ye abhi send nahi hogi."
+            : scheduleMode
+              ? "Kya aap ye notification chuni hui date aur time par set karna chahte hain?"
+              : "Kya aap ye notification sab active users ko abhi bhejna chahte hain?"
         );
 
 
@@ -4832,9 +5207,11 @@ if (urlFields.length >= 3) {
         true;
 
       activeButton.textContent =
-        scheduleMode
-          ? "Notification set ho rahi hai..."
-          : "Notification bheji ja rahi hai...";
+        draftMode
+          ? "Draft save ho raha hai..."
+          : scheduleMode
+            ? "Notification set ho rahi hai..."
+            : "Notification bheji ja rahi hai...";
 
       resultBox.className =
         "result";
@@ -4889,7 +5266,10 @@ repeat_type:
   repeatType.value,
 
 timezone_offset_minutes:
-  new Date().getTimezoneOffset()
+  new Date().getTimezoneOffset(),
+
+save_as_draft:
+  draftMode
                 })
             }
           );
@@ -4905,6 +5285,19 @@ timezone_offset_minutes:
         ) {
 
           if (
+            data.event ===
+              "notification_draft_saved"
+          ) {
+            showResult(
+              "success",
+              "✅ Draft successfully save ho gaya. Ye notification kahin send nahi hui.\\n\\n" +
+              "Draft ID: " +
+              String(data.schedule_id || "-")
+            );
+
+            saveAsDraft.checked = false;
+            scheduleDateTime.value = "";
+          } else if (
             data.event ===
               "notification_scheduled"
           ) {
