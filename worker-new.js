@@ -2592,7 +2592,8 @@ async function ensureScheduledPushTable(env) {
       repeat_type TEXT NOT NULL DEFAULT 'no_repeat',
       updated_at TEXT,
       timezone_offset_minutes INTEGER NOT NULL DEFAULT 0
-      ,link_data TEXT
+      ,link_data TEXT,
+      wait_repeat INTEGER NOT NULL DEFAULT 0
     )
   `).run();
 
@@ -2638,6 +2639,14 @@ async function ensureScheduledPushTable(env) {
     `).run();
   }
 
+
+  if (!columnNames.has("wait_repeat")) {
+    await env.DB.prepare(`
+      ALTER TABLE scheduled_push_notifications
+      ADD COLUMN wait_repeat INTEGER NOT NULL DEFAULT 0
+    `).run();
+  }
+
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_scheduled_push_due
     ON scheduled_push_notifications
@@ -2671,8 +2680,9 @@ async function saveScheduledPush(env, data) {
         repeat_type,
         updated_at,
         timezone_offset_minutes
-        ,link_data
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+        ,link_data,
+        wait_repeat
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
     `)
     .bind(
       data.title,
@@ -2691,7 +2701,8 @@ async function saveScheduledPush(env, data) {
         Array.isArray(data.links)
           ? data.links.slice(0, 3)
           : []
-      )
+      ),
+      normalizeWaitRepeat(data.wait_repeat)
     )
     .run();
 
@@ -2726,10 +2737,25 @@ function normalizeRepeatType(value) {
     : "no_repeat";
 }
 
+function normalizeWaitRepeat(value) {
+  const numberValue =
+    Math.floor(Number(value));
+
+  if (
+    !Number.isFinite(numberValue) ||
+    numberValue < 0
+  ) {
+    return 0;
+  }
+
+  return Math.min(numberValue, 10000);
+}
+
 function getNextRecurringDate(
   currentIso,
   repeatType,
-  timezoneOffsetMinutes = 0
+  timezoneOffsetMinutes = 0,
+  waitRepeat = 0
 ) {
   const type =
     normalizeRepeatType(repeatType);
@@ -2753,6 +2779,9 @@ function getNextRecurringDate(
     new Date(
       currentUtc.getTime() - offsetMs
     );
+
+  const repeatSteps =
+    normalizeWaitRepeat(waitRepeat) + 1;
 
   function advanceOnce(date) {
     if (type === "hourly") {
@@ -2810,8 +2839,18 @@ function getNextRecurringDate(
     }
   }
 
+  function advanceGroup(date) {
+    for (
+      let step = 0;
+      step < repeatSteps;
+      step++
+    ) {
+      advanceOnce(date);
+    }
+  }
+
   do {
-    advanceOnce(localNext);
+    advanceGroup(localNext);
   } while (
     localNext.getTime() + offsetMs <=
     Date.now()
@@ -2869,7 +2908,8 @@ async function runDueScheduledPushes(env) {
         scheduled_at,
         attempts,
         repeat_type,
-        timezone_offset_minutes
+        timezone_offset_minutes,
+        wait_repeat
       FROM scheduled_push_notifications
       WHERE status = 'pending'
         AND scheduled_at <= ?
@@ -2965,7 +3005,8 @@ async function runDueScheduledPushes(env) {
           getNextRecurringDate(
             item.scheduled_at,
             item.repeat_type,
-            item.timezone_offset_minutes
+            item.timezone_offset_minutes,
+            item.wait_repeat
           );
 
         if (nextRun) {
@@ -3120,6 +3161,7 @@ async function handlePushAdminPage(
             link_data,
             scheduled_at,
             repeat_type,
+            wait_repeat,
             timezone_offset_minutes,
             status,
             attempts,
@@ -3188,7 +3230,8 @@ async function handlePushAdminPage(
             repeat_type,
             updated_at,
             timezone_offset_minutes,
-            link_data
+            link_data,
+            wait_repeat
           )
           SELECT
             title,
@@ -3205,7 +3248,8 @@ async function handlePushAdminPage(
             repeat_type,
             ?,
             timezone_offset_minutes,
-            link_data
+            link_data,
+            wait_repeat
           FROM scheduled_push_notifications
           WHERE id = ?
         `)
@@ -3394,6 +3438,7 @@ async function handlePushAdminPage(
             link_data = ?,
             scheduled_at = ?,
             repeat_type = ?,
+            wait_repeat = ?,
             timezone_offset_minutes = ?,
             status = ?,
             attempts = 0,
@@ -3410,6 +3455,7 @@ async function handlePushAdminPage(
           JSON.stringify(updatedLinks),
           updatedDate.toISOString(),
           normalizeRepeatType(body.repeat_type),
+          normalizeWaitRepeat(body.wait_repeat),
           Number(body.timezone_offset_minutes || 0),
           saveAsDraft ? "draft" : "pending",
           new Date().toISOString(),
@@ -3431,6 +3477,8 @@ async function handlePushAdminPage(
           updatedDate.toISOString(),
         repeat_type:
           normalizeRepeatType(body.repeat_type),
+        wait_repeat:
+          normalizeWaitRepeat(body.wait_repeat),
         status:
           saveAsDraft ? "draft" : "pending"
       });
@@ -3820,6 +3868,8 @@ if (
               scheduledDate.toISOString(),
             repeat_type:
               repeatType,
+            wait_repeat:
+              normalizeWaitRepeat(body.wait_repeat),
             timezone_offset_minutes:
               Number(body.timezone_offset_minutes || 0),
             status:
@@ -3842,6 +3892,8 @@ if (
             scheduled.scheduled_at,
           repeat_type:
             repeatType,
+          wait_repeat:
+            normalizeWaitRepeat(body.wait_repeat),
           status:
             saveAsDraft ? "draft" : "pending"
         },
@@ -4529,6 +4581,40 @@ textarea{
       </select>
     </div>
 
+    <div class="field">
+      <label for="waitRepeat">
+        ⏳ Wait Repeat
+      </label>
+
+      <select
+        class="repeat-select"
+        id="waitRepeat"
+      >
+        <option value="0">Normal — Koi Wait Nahi</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10">10</option>
+        <option value="custom">Custom</option>
+      </select>
+
+      <input
+        id="waitRepeatCustom"
+        type="number"
+        min="0"
+        max="10000"
+        inputmode="numeric"
+        placeholder="Apni marzi ka number likhein"
+        style="display:none;margin-top:10px;"
+      />
+    </div>
+
     <button
       class="summary-btn"
       id="summaryButton"
@@ -4638,6 +4724,16 @@ var pushLinkCount = 0;
       "repeatType"
     );
 
+  var waitRepeat =
+    document.getElementById(
+      "waitRepeat"
+    );
+
+  var waitRepeatCustom =
+    document.getElementById(
+      "waitRepeatCustom"
+    );
+
   var summaryButton =
     document.getElementById(
       "summaryButton"
@@ -4672,6 +4768,50 @@ var pushLinkCount = 0;
     document.getElementById(
       "counter"
     );
+
+  function syncMainWaitRepeat() {
+    var disabled =
+      repeatType.value === "no_repeat";
+
+    waitRepeat.disabled = disabled;
+    waitRepeatCustom.disabled = disabled;
+    waitRepeatCustom.style.display =
+      !disabled && waitRepeat.value === "custom"
+        ? "block"
+        : "none";
+  }
+
+  function getMainWaitRepeat() {
+    if (repeatType.value === "no_repeat") {
+      return 0;
+    }
+
+    if (waitRepeat.value === "custom") {
+      return Math.max(
+        0,
+        Math.floor(
+          Number(waitRepeatCustom.value || 0)
+        )
+      );
+    }
+
+    return Math.max(
+      0,
+      Math.floor(Number(waitRepeat.value || 0))
+    );
+  }
+
+  repeatType.addEventListener(
+    "change",
+    syncMainWaitRepeat
+  );
+
+  waitRepeat.addEventListener(
+    "change",
+    syncMainWaitRepeat
+  );
+
+  syncMainWaitRepeat();
 
   var saveAsDraft =
     document.getElementById(
@@ -4758,6 +4898,89 @@ var pushLinkCount = 0;
 
     select.value = value || "no_repeat";
     return select;
+  }
+
+  function makeWaitRepeatControl(value) {
+    var numericValue =
+      Math.max(
+        0,
+        Math.floor(Number(value || 0))
+      );
+
+    var wrapper =
+      document.createElement("div");
+
+    var select =
+      document.createElement("select");
+    select.className = "repeat-select item-wait-repeat";
+
+    var options = [
+      ["0", "Normal — Koi Wait Nahi"],
+      ["1", "1"], ["2", "2"],
+      ["3", "3"], ["4", "4"],
+      ["5", "5"], ["6", "6"],
+      ["7", "7"], ["8", "8"],
+      ["9", "9"], ["10", "10"],
+      ["custom", "Custom"]
+    ];
+
+    options.forEach(function(optionData){
+      var option =
+        document.createElement("option");
+      option.value = optionData[0];
+      option.textContent = optionData[1];
+      select.appendChild(option);
+    });
+
+    var customInput =
+      document.createElement("input");
+    customInput.type = "number";
+    customInput.min = "0";
+    customInput.max = "10000";
+    customInput.inputMode = "numeric";
+    customInput.placeholder =
+      "Apni marzi ka number likhein";
+    customInput.style.marginTop = "10px";
+
+    if (numericValue >= 1 && numericValue <= 10) {
+      select.value = String(numericValue);
+      customInput.style.display = "none";
+    } else if (numericValue > 10) {
+      select.value = "custom";
+      customInput.value = String(numericValue);
+      customInput.style.display = "block";
+    } else {
+      select.value = "0";
+      customInput.style.display = "none";
+    }
+
+    select.addEventListener("change", function(){
+      customInput.style.display =
+        select.value === "custom"
+          ? "block"
+          : "none";
+    });
+
+    wrapper.appendChild(select);
+    wrapper.appendChild(customInput);
+
+    return {
+      wrapper: wrapper,
+      select: select,
+      input: customInput,
+      getValue: function(){
+        if (select.value === "custom") {
+          return Math.max(
+            0,
+            Math.floor(Number(customInput.value || 0))
+          );
+        }
+        return Math.max(
+          0,
+          Math.floor(Number(select.value || 0))
+        );
+      }
+    };
   }
 
   async function adminScheduleRequest(payload) {
@@ -4993,6 +5216,30 @@ var pushLinkCount = 0;
           makeField("🔁 Repeat", itemRepeat)
         );
 
+        var itemWaitRepeat =
+          makeWaitRepeatControl(
+            schedule.wait_repeat
+          );
+        item.appendChild(
+          makeField(
+            "⏳ Wait Repeat",
+            itemWaitRepeat.wrapper
+          )
+        );
+
+        function syncItemWaitRepeat() {
+          var disabled =
+            itemRepeat.value === "no_repeat";
+          itemWaitRepeat.select.disabled = disabled;
+          itemWaitRepeat.input.disabled = disabled;
+        }
+
+        itemRepeat.addEventListener(
+          "change",
+          syncItemWaitRepeat
+        );
+        syncItemWaitRepeat();
+
         var actions =
           document.createElement("div");
         actions.className = "item-actions";
@@ -5050,6 +5297,8 @@ var pushLinkCount = 0;
                   selected.toISOString(),
                 repeat_type:
                   itemRepeat.value,
+                wait_repeat:
+                  itemWaitRepeat.getValue(),
                 timezone_offset_minutes:
                   new Date().getTimezoneOffset(),
                 save_as_draft:
@@ -5181,6 +5430,8 @@ var pushLinkCount = 0;
                   message: messageInput.value.trim(),
                   schedule_at: selected.toISOString(),
                   repeat_type: itemRepeat.value,
+                  wait_repeat:
+                    itemWaitRepeat.getValue(),
                   timezone_offset_minutes:
                     new Date().getTimezoneOffset(),
                   save_as_draft: false
@@ -5732,6 +5983,9 @@ schedule_at:
 repeat_type:
   repeatType.value,
 
+wait_repeat:
+  getMainWaitRepeat(),
+
 timezone_offset_minutes:
   new Date().getTimezoneOffset(),
 
@@ -5778,7 +6032,9 @@ save_as_draft:
                 data.scheduled_at
               ).toLocaleString() +
               "\\nRepeat: " +
-              String(data.repeat_type || "no_repeat")
+              String(data.repeat_type || "no_repeat") +
+              "\\nWait Repeat: " +
+              String(data.wait_repeat || 0)
             );
 
             scheduleDateTime.value = "";
