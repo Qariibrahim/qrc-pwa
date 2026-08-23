@@ -2592,6 +2592,7 @@ async function ensureScheduledPushTable(env) {
       repeat_type TEXT NOT NULL DEFAULT 'no_repeat',
       updated_at TEXT,
       timezone_offset_minutes INTEGER NOT NULL DEFAULT 0
+      ,link_data TEXT
     )
   `).run();
 
@@ -2630,6 +2631,13 @@ async function ensureScheduledPushTable(env) {
     `).run();
   }
 
+  if (!columnNames.has("link_data")) {
+    await env.DB.prepare(`
+      ALTER TABLE scheduled_push_notifications
+      ADD COLUMN link_data TEXT
+    `).run();
+  }
+
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_scheduled_push_due
     ON scheduled_push_notifications
@@ -2663,7 +2671,8 @@ async function saveScheduledPush(env, data) {
         repeat_type,
         updated_at,
         timezone_offset_minutes
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)
+        ,link_data
+      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
     `)
     .bind(
       data.title,
@@ -2678,6 +2687,11 @@ async function saveScheduledPush(env, data) {
       normalizeRepeatType(data.repeat_type),
       createdAt,
       Number(data.timezone_offset_minutes || 0)
+      ,JSON.stringify(
+        Array.isArray(data.links)
+          ? data.links.slice(0, 3)
+          : []
+      )
     )
     .run();
 
@@ -3103,6 +3117,7 @@ async function handlePushAdminPage(
             message,
             target_url,
             link_text,
+            link_data,
             scheduled_at,
             repeat_type,
             timezone_offset_minutes,
@@ -3231,12 +3246,47 @@ async function handlePushAdminPage(
         );
       }
 
+      const updatedLinks =
+        Array.isArray(body.links)
+          ? body.links
+              .slice(0, 3)
+              .map(function(link){
+                return {
+                  url: cleanText(link && link.url, ""),
+                  text: cleanText(link && link.text, "").slice(0, 40)
+                };
+              })
+              .filter(function(link){
+                return Boolean(link.url && link.text);
+              })
+          : [];
+
+      let updatedTargetUrl = "";
+      let updatedLinkText = "";
+
+      if (updatedLinks.length === 1) {
+        updatedTargetUrl = updatedLinks[0].url;
+        updatedLinkText = updatedLinks[0].text;
+      } else if (updatedLinks.length > 1) {
+        const optionPage =
+          await createNotificationOptionPage(
+            env,
+            updatedLinks
+          );
+        updatedTargetUrl =
+          SITE_ORIGIN + "/" + optionPage.slug;
+        updatedLinkText = "Options Dekhein";
+      }
+
       const updateResult =
         await env.DB.prepare(`
           UPDATE scheduled_push_notifications
           SET
             title = ?,
             message = ?,
+            target_url = ?,
+            link_text = ?,
+            link_data = ?,
             scheduled_at = ?,
             repeat_type = ?,
             timezone_offset_minutes = ?,
@@ -3250,6 +3300,9 @@ async function handlePushAdminPage(
         .bind(
           updatedTitle,
           updatedMessage,
+          updatedTargetUrl,
+          updatedLinkText,
+          JSON.stringify(updatedLinks),
           updatedDate.toISOString(),
           normalizeRepeatType(body.repeat_type),
           Number(body.timezone_offset_minutes || 0),
@@ -3310,7 +3363,8 @@ async function handlePushAdminPage(
             title,
             message,
             target_url,
-            link_text
+            link_text,
+            link_data
           FROM scheduled_push_notifications
           WHERE id = ?
           LIMIT 1
@@ -3340,6 +3394,45 @@ async function handlePushAdminPage(
           storedSchedule.message || ""
         ).slice(0, 500);
 
+      const sendLinks =
+        Array.isArray(body.links)
+          ? body.links
+              .slice(0, 3)
+              .map(function(link){
+                return {
+                  url: cleanText(link && link.url, ""),
+                  text: cleanText(link && link.text, "").slice(0, 40)
+                };
+              })
+              .filter(function(link){
+                return Boolean(link.url && link.text);
+              })
+          : [];
+
+      let sendTargetUrl =
+        String(storedSchedule.target_url || "");
+      let sendLinkText =
+        String(storedSchedule.link_text || "");
+
+      if (Array.isArray(body.links)) {
+        sendTargetUrl = "";
+        sendLinkText = "";
+
+        if (sendLinks.length === 1) {
+          sendTargetUrl = sendLinks[0].url;
+          sendLinkText = sendLinks[0].text;
+        } else if (sendLinks.length > 1) {
+          const optionPage =
+            await createNotificationOptionPage(
+              env,
+              sendLinks
+            );
+          sendTargetUrl =
+            SITE_ORIGIN + "/" + optionPage.slug;
+          sendLinkText = "Options Dekhein";
+        }
+      }
+
       const internalUrl =
         new URL(
           SITE_ORIGIN +
@@ -3360,11 +3453,11 @@ async function handlePushAdminPage(
       );
       internalUrl.searchParams.set(
         "url",
-        String(storedSchedule.target_url || "")
+        sendTargetUrl
       );
       internalUrl.searchParams.set(
         "link_text",
-        String(storedSchedule.link_text || "")
+        sendLinkText
       );
 
       const sendResponse =
@@ -3410,6 +3503,9 @@ async function handlePushAdminPage(
         SET
           title = ?,
           message = ?,
+          target_url = ?,
+          link_text = ?,
+          link_data = ?,
           status = 'sent',
           sent_at = ?,
           processing_at = NULL,
@@ -3421,6 +3517,9 @@ async function handlePushAdminPage(
       .bind(
         sendTitle,
         sendMessage,
+        sendTargetUrl,
+        sendLinkText,
+        JSON.stringify(sendLinks),
         sentAt,
         sentAt,
         scheduleId
@@ -3523,41 +3622,38 @@ const hasThirdLink =
     linkText3
   );
 
+const editableLinks = [];
+
+if (targetUrl && linkText) {
+  editableLinks.push({
+    url: targetUrl,
+    text: linkText
+  });
+}
+
+if (hasSecondLink) {
+  editableLinks.push({
+    url: targetUrl2,
+    text: linkText2
+  });
+}
+
+if (hasThirdLink) {
+  editableLinks.push({
+    url: targetUrl3,
+    text: linkText3
+  });
+}
+
 if (
   hasSecondLink ||
   hasThirdLink
 ) {
 
-  const optionLinks = [];
-
-  if (
-    targetUrl &&
-    linkText
-  ) {
-    optionLinks.push({
-      url: targetUrl,
-      text: linkText
-    });
-  }
-
-  if (hasSecondLink) {
-    optionLinks.push({
-      url: targetUrl2,
-      text: linkText2
-    });
-  }
-
-  if (hasThirdLink) {
-    optionLinks.push({
-      url: targetUrl3,
-      text: linkText3
-    });
-  }
-
   const optionPage =
     await createNotificationOptionPage(
       env,
-      optionLinks
+      editableLinks
     );
 
   notificationTargetUrl =
@@ -3622,7 +3718,9 @@ if (
             timezone_offset_minutes:
               Number(body.timezone_offset_minutes || 0),
             status:
-              saveAsDraft ? "draft" : "pending"
+              saveAsDraft ? "draft" : "pending",
+            links:
+              editableLinks
           }
         );
 
@@ -4052,6 +4150,46 @@ textarea{
   color:#fff;
   font-weight:800;
   cursor:pointer;
+}
+
+.edit-links-box{
+  margin:12px 0;
+  padding:12px;
+  border:1px dashed #0b318f;
+  border-radius:14px;
+  background:#eef4ff;
+}
+
+.edit-link-row{
+  margin-bottom:10px;
+  padding:10px;
+  border:1px solid #ccd5e5;
+  border-radius:12px;
+  background:#fff;
+}
+
+.edit-link-row input{
+  margin-bottom:8px;
+}
+
+.edit-link-remove,
+.edit-link-add{
+  width:100%;
+  border:0;
+  border-radius:10px;
+  padding:10px;
+  font-weight:800;
+  cursor:pointer;
+}
+
+.edit-link-remove{
+  background:#b42318;
+  color:#fff;
+}
+
+.edit-link-add{
+  background:#0b318f;
+  color:#fff;
 }
 
 .item-update{background:#166534;}
@@ -4567,6 +4705,141 @@ var pushLinkCount = 0;
           makeField("💬 Message", messageInput)
         );
 
+        var linksBox =
+          document.createElement("div");
+        linksBox.className = "edit-links-box";
+
+        var linksHeading =
+          document.createElement("div");
+        linksHeading.className = "schedule-item-title";
+        linksHeading.textContent = "🔗 Notification Links";
+        linksBox.appendChild(linksHeading);
+
+        var editLinksContainer =
+          document.createElement("div");
+        linksBox.appendChild(editLinksContainer);
+
+        var initialLinks = [];
+
+        try {
+          initialLinks = JSON.parse(
+            schedule.link_data || "[]"
+          );
+        } catch(error) {
+          initialLinks = [];
+        }
+
+        if (
+          !Array.isArray(initialLinks) ||
+          !initialLinks.length
+        ) {
+          initialLinks = [];
+          if (
+            schedule.target_url &&
+            schedule.link_text
+          ) {
+            initialLinks.push({
+              url: schedule.target_url,
+              text: schedule.link_text
+            });
+          }
+        }
+
+        function addEditorLink(linkData) {
+          if (
+            editLinksContainer.children.length >= 3
+          ) {
+            window.alert("Maximum 3 links add kiye ja sakte hain.");
+            return;
+          }
+
+          var row =
+            document.createElement("div");
+          row.className = "edit-link-row";
+
+          var urlInput =
+            document.createElement("input");
+          urlInput.type = "url";
+          urlInput.className = "edit-link-url";
+          urlInput.placeholder = "Link URL yahan likhein";
+          urlInput.value =
+            linkData && linkData.url
+              ? linkData.url
+              : "";
+
+          var textInput =
+            document.createElement("input");
+          textInput.type = "text";
+          textInput.maxLength = 40;
+          textInput.className = "edit-link-text";
+          textInput.placeholder = "Button ka naam likhein";
+          textInput.value =
+            linkData && linkData.text
+              ? linkData.text
+              : "";
+
+          var removeButton =
+            document.createElement("button");
+          removeButton.type = "button";
+          removeButton.className = "edit-link-remove";
+          removeButton.textContent = "🗑 LINK DELETE";
+          removeButton.addEventListener(
+            "click",
+            function(){
+              row.remove();
+            }
+          );
+
+          row.appendChild(urlInput);
+          row.appendChild(textInput);
+          row.appendChild(removeButton);
+          editLinksContainer.appendChild(row);
+        }
+
+        function collectEditorLinks() {
+          var links = [];
+          var rows =
+            editLinksContainer.querySelectorAll(
+              ".edit-link-row"
+            );
+
+          rows.forEach(function(row){
+            var urlValue =
+              row.querySelector(".edit-link-url").value.trim();
+            var textValue =
+              row.querySelector(".edit-link-text").value.trim();
+
+            if (urlValue && textValue) {
+              links.push({
+                url: urlValue,
+                text: textValue
+              });
+            }
+          });
+
+          return links;
+        }
+
+        initialLinks.slice(0, 3).forEach(
+          function(link){
+            addEditorLink(link);
+          }
+        );
+
+        var addEditorLinkButton =
+          document.createElement("button");
+        addEditorLinkButton.type = "button";
+        addEditorLinkButton.className = "edit-link-add";
+        addEditorLinkButton.textContent = "➕ ADD LINK";
+        addEditorLinkButton.addEventListener(
+          "click",
+          function(){
+            addEditorLink({});
+          }
+        );
+        linksBox.appendChild(addEditorLinkButton);
+        item.appendChild(linksBox);
+
         var dateInput =
           document.createElement("input");
         dateInput.type = "datetime-local";
@@ -4650,7 +4923,9 @@ var pushLinkCount = 0;
                 timezone_offset_minutes:
                   new Date().getTimezoneOffset(),
                 save_as_draft:
-                  schedule.status === "draft"
+                  schedule.status === "draft",
+                links:
+                  collectEditorLinks()
               });
 
               window.alert(
@@ -4721,6 +4996,7 @@ var pushLinkCount = 0;
                 schedule_id: schedule.id,
                 title: titleInput.value.trim(),
                 message: messageInput.value.trim()
+                ,links: collectEditorLinks()
               });
               window.alert("Notification abhi successfully send ho gayi.");
               await loadSchedules();
@@ -4778,6 +5054,7 @@ var pushLinkCount = 0;
                   timezone_offset_minutes:
                     new Date().getTimezoneOffset(),
                   save_as_draft: false
+                  ,links: collectEditorLinks()
                 });
                 window.alert("Draft Live ho gaya; notification muqarrarah waqt par send hogi.");
                 await loadSchedules();
