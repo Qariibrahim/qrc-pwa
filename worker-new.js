@@ -8991,67 +8991,114 @@ self.addEventListener(
     event.notification.close();
 
     const notificationData =
-  event.notification.data || {};
+      event.notification.data || {};
 
-let targetUrl =
-  notificationData.url || "";
+    let targetUrl =
+      notificationData.url || "";
 
-if (
-  event.action === "open_link_2"
-) {
-  targetUrl =
-    notificationData.url2 ||
-    notificationData.url ||
-    "";
-}
+    if (
+      event.action === "open_link_2"
+    ) {
+      targetUrl =
+        notificationData.url2 ||
+        notificationData.url ||
+        "";
+    }
 
-if (
-  event.action === "open_link_3"
-) {
-  targetUrl =
-    notificationData.url3 ||
-    notificationData.url ||
-    "";
-}
+    if (
+      event.action === "open_link_3"
+    ) {
+      targetUrl =
+        notificationData.url3 ||
+        notificationData.url ||
+        "";
+    }
 
-/*
-  Link nahi hai to notification sirf close hogi.
-  App ya website open nahi hogi.
-*/
-if (!targetUrl) {
-  return;
-}
+    /*
+      Link nahi hai to notification sirf close hogi.
+      App ya website open nahi hogi.
+    */
+    if (!targetUrl) {
+      return;
+    }
 
     event.waitUntil(
+      (async () => {
 
-      clients
-        .matchAll({
-          type: "window",
-          includeUncontrolled: true
-        })
-        .then(windowClients => {
+        const absoluteTarget =
+          new URL(
+            targetUrl,
+            self.location.origin
+          ).href;
 
-          for (
-            const client of windowClients
+        const windowClients =
+          await clients.matchAll({
+            type: "window",
+            includeUncontrolled: true
+          });
+
+        /*
+          Agar wahi exact page pehle se khula hai
+          to sirf usi ko focus karein.
+        */
+        for (
+          const client of windowClients
+        ) {
+          if (
+            client.url === absoluteTarget &&
+            "focus" in client
           ) {
+            return client.focus();
+          }
+        }
+
+        /*
+          Agar Imdade Rohani PWA/site ka koi aur
+          page pehle se khula hai to naya tab/window
+          banane ke bajaye usi existing window ko
+          target link par le jaakar focus karein.
+        */
+        for (
+          const client of windowClients
+        ) {
+          try {
+            const clientUrl =
+              new URL(client.url);
+
+            const target =
+              new URL(absoluteTarget);
 
             if (
-              client.url === targetUrl &&
-              "focus" in client
+              clientUrl.origin ===
+                target.origin &&
+              "navigate" in client
             ) {
-              return client.focus();
+              await client.navigate(
+                absoluteTarget
+              );
+
+              if ("focus" in client) {
+                return client.focus();
+              }
+
+              return client;
             }
-
+          } catch (error) {
+            /* Invalid client URL ko ignore karein. */
           }
+        }
 
-          if (clients.openWindow) {
-            return clients.openWindow(
-              targetUrl
-            );
-          }
+        /*
+          App/site pehle se open nahi hai to hi
+          nayi window kholi jayegi.
+        */
+        if (clients.openWindow) {
+          return clients.openWindow(
+            absoluteTarget
+          );
+        }
 
-        })
-
+      })()
     );
 
   }
