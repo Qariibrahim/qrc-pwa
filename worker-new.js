@@ -25,6 +25,7 @@ const CLEAN_BLOGGER_ROUTES = {
   "/form-2": "/p/page-one.html",
   "/janch-rupay": "/p/blog-page_8.html",
   "/ittilaat": "/p/blog-page_1.html",
+  "/name-janch": "/p/blog-page_51.html",
   "/qawaneen": "/p/blog-page_52.html",
   "/contact": "/p/blog-page_14.html",
   "/tashkheese-dawa": "/p/fawaidtashkheesedawa.html"
