@@ -11,6 +11,34 @@ const LOGO_URL =
 const DEFAULT_APP_VERSION = "2";
 
 /* =========================================================
+   CLEAN CUSTOM BLOGGER URLS
+   Left side  = URL visible in the browser
+   Right side = original Blogger page
+   Add future pages to this same list.
+   ========================================================= */
+
+const CLEAN_BLOGGER_ROUTES = {
+  "/Home": "/",
+  "/feedback": "/p/feedback.html",
+  "/quran-sharif": "/p/quran-shreef.html",
+  "/form-karguzari": "/p/blog-page_22.html",
+  "/naam-janch-online": "/p/blog-page_51.html",
+  "/form-2-naam-janch": "/p/page-one.html",
+  "/naqsh-download": "/p/blog-page_13.html",
+  "/fawaid-tashkhees-e-dawa": "/p/fawaidtashkheesedawa.html",
+  "/janch-rupaye-kahan-se-ayega": "/p/blog-page_8.html",
+  "/ittilaat": "/p/blog-page_1.html",
+  "/contacts": "/p/blog-page_14.html",
+  "/qawaneen": "/p/blog-page_52.html"
+};
+
+const OLD_BLOGGER_ROUTES = Object.fromEntries(
+  Object.entries(CLEAN_BLOGGER_ROUTES).map(
+    ([cleanPath, bloggerPath]) => [bloggerPath, cleanPath]
+  )
+);
+
+/* =========================================================
    MAIN WORKER
    ========================================================= */
 
@@ -415,6 +443,13 @@ if (path === "/notification-bell.png") {
       /* =============================================
          BLOGGER PAGE PROXY
          ============================================= */
+
+      const cleanRouteResponse =
+        handleCleanBloggerRoute(request);
+
+      if (cleanRouteResponse) {
+        return cleanRouteResponse;
+      }
 
       return proxyBlogger(request);
 
@@ -11288,15 +11323,56 @@ body{
    BLOGGER PROXY
    ========================================================= */
 
+function handleCleanBloggerRoute(request) {
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return null;
+  }
+
+  const url = new URL(request.url);
+  let path = url.pathname;
+
+  if (path.length > 1 && path.endsWith("/")) {
+    path = path.slice(0, -1);
+  }
+
+  /* Old/default Blogger URL -> clean browser URL */
+  const cleanPath = OLD_BLOGGER_ROUTES[path];
+
+  if (cleanPath) {
+    return Response.redirect(
+      new URL(cleanPath, url.origin).toString(),
+      301
+    );
+  }
+
+  /* Root and lowercase /home -> preferred /Home */
+  if (path === "/" || path === "/home") {
+    return Response.redirect(
+      new URL("/Home", url.origin).toString(),
+      301
+    );
+  }
+
+  /* Clean browser URL -> original Blogger content internally */
+  const bloggerPath = CLEAN_BLOGGER_ROUTES[path];
+
+  if (bloggerPath) {
+    return proxyBlogger(request, bloggerPath);
+  }
+
+  return null;
+}
+
 async function proxyBlogger(
-  request
+  request,
+  targetPath = null
 ) {
   const incomingUrl =
     new URL(request.url);
 
   const bloggerUrl =
     new URL(
-      incomingUrl.pathname +
+      (targetPath || incomingUrl.pathname) +
       incomingUrl.search,
       SITE_ORIGIN
     );
