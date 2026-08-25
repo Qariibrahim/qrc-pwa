@@ -11439,6 +11439,7 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
 <script>
 (function () {
   var cleanPath = ${JSON.stringify(cleanPath)};
+  var routeMap = ${JSON.stringify(OLD_BLOGGER_ROUTES)};
 
   function keepCleanUrl() {
     if (
@@ -11454,7 +11455,74 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
     }
   }
 
+  function getCleanLink(href) {
+    if (!href) return "";
+
+    try {
+      var linkUrl = new URL(href, window.location.origin);
+
+      if (linkUrl.origin !== window.location.origin) return "";
+
+      return routeMap[linkUrl.pathname] || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function rewritePageLinks(root) {
+    var scope = root && root.querySelectorAll ? root : document;
+    var links = scope.querySelectorAll("a[href]");
+
+    for (var i = 0; i < links.length; i++) {
+      var mapped = getCleanLink(links[i].getAttribute("href"));
+
+      if (mapped) links[i].setAttribute("href", mapped);
+    }
+  }
+
   keepCleanUrl();
+  rewritePageLinks(document);
+
+  document.addEventListener("DOMContentLoaded", function () {
+    keepCleanUrl();
+    rewritePageLinks(document);
+  });
+
+  document.addEventListener("click", function (event) {
+    var link = event.target && event.target.closest
+      ? event.target.closest("a[href]")
+      : null;
+
+    if (!link) return;
+
+    var mapped = getCleanLink(link.getAttribute("href"));
+
+    if (mapped) {
+      event.preventDefault();
+      window.location.assign(mapped);
+    }
+  }, true);
+
+  new MutationObserver(function (mutations) {
+    for (var i = 0; i < mutations.length; i++) {
+      for (var j = 0; j < mutations[i].addedNodes.length; j++) {
+        var node = mutations[i].addedNodes[j];
+
+        if (node && node.nodeType === 1) {
+          if (node.matches && node.matches("a[href]")) {
+            var mapped = getCleanLink(node.getAttribute("href"));
+            if (mapped) node.setAttribute("href", mapped);
+          }
+
+          rewritePageLinks(node);
+        }
+      }
+    }
+  }).observe(document.documentElement, {
+    childList: true,
+    subtree: true
+  });
+
   window.addEventListener("pageshow", keepCleanUrl);
   window.setTimeout(keepCleanUrl, 100);
   window.setTimeout(keepCleanUrl, 700);
