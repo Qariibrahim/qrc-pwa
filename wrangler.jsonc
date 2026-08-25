@@ -1,6 +1,6 @@
 {
   "name": "qrc-pwa",
-  "main": "worker.new.js",
+  "main": "worker.js",
   "compatibility_date": "2026-08-02",
 
   "d1_databases": [
