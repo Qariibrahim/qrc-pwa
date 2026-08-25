@@ -11357,7 +11357,7 @@ function handleCleanBloggerRoute(request) {
   const bloggerPath = CLEAN_BLOGGER_ROUTES[path];
 
   if (bloggerPath) {
-    return proxyBlogger(request, bloggerPath);
+    return proxyBlogger(request, bloggerPath, path);
   }
 
   return null;
@@ -11365,7 +11365,8 @@ function handleCleanBloggerRoute(request) {
 
 async function proxyBlogger(
   request,
-  targetPath = null
+  targetPath = null,
+  cleanBrowserPath = null
 ) {
   const incomingUrl =
     new URL(request.url);
@@ -11407,6 +11408,18 @@ async function proxyBlogger(
   );
 }
 
+if (
+  cleanBrowserPath &&
+  (response.headers.get("Content-Type") || "")
+    .toLowerCase()
+    .includes("text/html")
+) {
+  return rewriteCleanBloggerHtml(
+    response,
+    cleanBrowserPath
+  );
+}
+
 return response;
 
   } catch (error) {
@@ -11415,6 +11428,71 @@ return response;
       302
     );
   }
+}
+
+/* =========================================================
+   KEEP CLEAN URL IN THE BROWSER + REWRITE BLOGGER LINKS
+   ========================================================= */
+
+function rewriteCleanBloggerHtml(response, cleanPath) {
+  const cleanUrlScript = `
+<script>
+(function () {
+  var cleanPath = ${JSON.stringify(cleanPath)};
+
+  function keepCleanUrl() {
+    if (
+      window.location.pathname !== cleanPath ||
+      window.location.search ||
+      window.location.hash
+    ) {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        cleanPath
+      );
+    }
+  }
+
+  keepCleanUrl();
+  window.addEventListener("pageshow", keepCleanUrl);
+  window.setTimeout(keepCleanUrl, 100);
+  window.setTimeout(keepCleanUrl, 700);
+  window.setTimeout(keepCleanUrl, 1600);
+})();
+</script>`;
+
+  return new HTMLRewriter()
+    .on("head", {
+      element(element) {
+        element.append(cleanUrlScript, {
+          html: true
+        });
+      }
+    })
+    .on("a[href]", {
+      element(element) {
+        const href = element.getAttribute("href");
+
+        if (!href) return;
+
+        try {
+          const linkUrl = new URL(href, SITE_ORIGIN);
+
+          if (linkUrl.origin !== SITE_ORIGIN) return;
+
+          const mappedPath =
+            OLD_BLOGGER_ROUTES[linkUrl.pathname];
+
+          if (mappedPath) {
+            element.setAttribute("href", mappedPath);
+          }
+        } catch (_) {
+          /* Leave malformed or special links unchanged. */
+        }
+      }
+    })
+    .transform(response);
 }
 
 /* =========================================================
