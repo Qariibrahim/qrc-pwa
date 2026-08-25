@@ -18,18 +18,16 @@ const DEFAULT_APP_VERSION = "2";
    ========================================================= */
 
 const CLEAN_BLOGGER_ROUTES = {
-  "/Home": "/",
-  "/feedback": "/p/feedback.html",
-  "/quran-sharif": "/p/quran-shreef.html",
-  "/form-karguzari": "/p/blog-page_22.html",
-  "/naam-janch-online": "/p/blog-page_51.html",
-  "/form-2-naam-janch": "/p/page-one.html",
+  "/home": "/",
+  "/form-kaarguzari": "/p/blog-page_22.html",
+  "/quran-shreef": "/p/quran-shreef.html",
   "/naqsh-download": "/p/blog-page_13.html",
-  "/fawaid-tashkhees-e-dawa": "/p/fawaidtashkheesedawa.html",
-  "/janch-rupaye-kahan-se-ayega": "/p/blog-page_8.html",
+  "/form-2": "/p/page-one.html",
+  "/janch-rupay": "/p/blog-page_8.html",
   "/ittilaat": "/p/blog-page_1.html",
-  "/contacts": "/p/blog-page_14.html",
-  "/qawaneen": "/p/blog-page_52.html"
+  "/qawaneen": "/p/blog-page_52.html",
+  "/contact": "/p/blog-page_14.html",
+  "/tashkheese-dawa": "/p/fawaidtashkheesedawa.html"
 };
 
 const OLD_BLOGGER_ROUTES = Object.fromEntries(
@@ -11345,10 +11343,10 @@ function handleCleanBloggerRoute(request) {
     );
   }
 
-  /* Root and lowercase /home -> preferred /Home */
-  if (path === "/" || path === "/home") {
+  /* Root and old capital /Home -> preferred /home */
+  if (path === "/" || path === "/Home") {
     return Response.redirect(
-      new URL("/Home", url.origin).toString(),
+      new URL("/home", url.origin).toString(),
       301
     );
   }
