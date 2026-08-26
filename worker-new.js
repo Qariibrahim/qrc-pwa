@@ -8633,7 +8633,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v6-offline";
+const VERSION = "imdaderohani-pwa-v7-offline-menu";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -8662,6 +8662,32 @@ const OFFLINE_PAGE_URLS = [
   "/contact",
   "/tashkheese-dawa"
 ];
+
+/*
+  Blogger ke purane URLs aur pehle istemal hue clean URLs ko
+  unke naye offline-cache address tak pahunchata hai.
+*/
+const OFFLINE_ROUTE_ALIASES = {
+  "/": "/home",
+  "/Home": "/home",
+  "/p/blog-page_22.html": "/form-kaarguzari",
+  "/p/quran-shreef.html": "/quran-shreef",
+  "/p/blog-page_13.html": "/naqsh-download",
+  "/p/page-one.html": "/form-2",
+  "/p/blog-page_8.html": "/janch-rupay",
+  "/p/blog-page_1.html": "/ittilaat",
+  "/p/blog-page_51.html": "/name-janch",
+  "/p/blog-page_52.html": "/qawaneen",
+  "/p/blog-page_14.html": "/contact",
+  "/p/fawaidtashkheesedawa.html": "/tashkheese-dawa",
+  "/quran-sharif": "/quran-shreef",
+  "/form-karguzari": "/form-kaarguzari",
+  "/naam-janch-online": "/name-janch",
+  "/form-2-naam-janch": "/form-2",
+  "/janch-rupaye-kahan-se-ayega": "/janch-rupay",
+  "/fawaid-tashkhees-e-dawa": "/tashkheese-dawa",
+  "/contacts": "/contact"
+};
 
 async function cacheOfflinePages() {
   const cache = await caches.open(PAGE_CACHE);
@@ -8806,20 +8832,37 @@ if (
 
             return response;
           })
-          .catch(
-            async () =>
-              (
+          .catch(async () => {
+            const directCached =
+              await caches.match(
+                request,
+                { ignoreSearch: true }
+              );
+
+            if (directCached) {
+              return directCached;
+            }
+
+            const offlinePath =
+              new URL(request.url).pathname;
+
+            const cachedAlias =
+              OFFLINE_ROUTE_ALIASES[offlinePath];
+
+            if (cachedAlias) {
+              const aliasResponse =
                 await caches.match(
-                  request,
+                  cachedAlias,
                   { ignoreSearch: true }
-                )
-              ) ||
-              (
-                await caches.match(
-                  OFFLINE_URL
-                )
-              )
-          )
+                );
+
+              if (aliasResponse) {
+                return aliasResponse;
+              }
+            }
+
+            return caches.match(OFFLINE_URL);
+          })
       );
 
       return;
