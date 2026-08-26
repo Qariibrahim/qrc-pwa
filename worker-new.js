@@ -1767,7 +1767,8 @@ async function handlePushTestSend(
         webpush: {
 
           headers: {
-            Urgency: "high"
+            Urgency: "normal",
+            TTL: "21600"
           },
 
           fcm_options: {
@@ -2241,7 +2242,8 @@ action_text3:
                     webpush: {
 
                       headers: {
-                        Urgency: "high"
+                        Urgency: "normal",
+                        TTL: "21600"
                       },
                        
                     }
@@ -9228,10 +9230,13 @@ badge:
         "imdaderohani-notification",
 
       renotify:
-        true,
+        false,
 
       requireInteraction:
-        true,
+        false,
+
+      timestamp:
+        Date.now(),
 
     actions:
   notificationActions,
