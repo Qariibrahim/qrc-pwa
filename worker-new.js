@@ -8633,7 +8633,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v7-offline-menu";
+const VERSION = "imdaderohani-pwa-v8-offline-posts";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -8692,6 +8692,8 @@ const OFFLINE_ROUTE_ALIASES = {
 async function cacheOfflinePages() {
   const cache = await caches.open(PAGE_CACHE);
 
+  const discoveredPosts = new Set();
+
   await Promise.allSettled(
     OFFLINE_PAGE_URLS.map(async pageUrl => {
       const request = new Request(pageUrl, {
@@ -8703,8 +8705,57 @@ async function cacheOfflinePages() {
 
       if (response && response.ok) {
         await cache.put(pageUrl, response.clone());
+
+        const contentType =
+          response.headers.get("content-type") || "";
+
+        if (contentType.includes("text/html")) {
+          const html = await response.clone().text();
+          const hrefPattern =
+            /href\\s*=\\s*["']([^"']+)["']/gi;
+
+          let match;
+
+          while ((match = hrefPattern.exec(html))) {
+            try {
+              const href = match[1].replace(/&amp;/g, "&");
+              const linkedUrl =
+                new URL(href, self.location.origin);
+
+              if (
+                linkedUrl.origin === self.location.origin &&
+                /\\/\\d{4}\\/\\d{2}\\/[^/]+\\.html$/.test(
+                  linkedUrl.pathname
+                )
+              ) {
+                discoveredPosts.add(
+                  linkedUrl.pathname + linkedUrl.search
+                );
+              }
+            } catch (_) {
+              /* Galat ya special link ko chhor dein. */
+            }
+          }
+        }
       }
     })
+  );
+
+  await Promise.allSettled(
+    Array.from(discoveredPosts)
+      .slice(0, 100)
+      .map(async postUrl => {
+        const request = new Request(postUrl, {
+          cache: "reload",
+          credentials: "same-origin"
+        });
+
+        const response = await fetch(request);
+
+        if (response && response.ok) {
+          await cache.put(postUrl, response.clone());
+        }
+      })
   );
 }
 
@@ -11570,6 +11621,27 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
     );
   }
 
+  function isNavigationControl(element) {
+    if (!element || !element.closest) return false;
+
+    if (
+      element.closest(
+        "nav, header, [role='navigation'], .menu, #menu, .navbar, .sidebar, .drawer"
+      )
+    ) {
+      return true;
+    }
+
+    var identity = [
+      element.id || "",
+      element.className || "",
+      element.getAttribute("aria-label") || "",
+      element.getAttribute("title") || ""
+    ].join(" ").toLowerCase();
+
+    return /menu|nav|hamburger|drawer|sidebar/.test(identity);
+  }
+
   function updateOfflineReadingMode() {
     var isOffline = !window.navigator.onLine;
     var banner = document.getElementById("imdaderohani-offline-banner");
@@ -11590,10 +11662,14 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
     banner.style.display = isOffline ? "block" : "none";
 
     var controls = document.querySelectorAll(
-      "form input, form textarea, form select, form button"
+      "input, textarea, select, button"
     );
 
     for (var i = 0; i < controls.length; i++) {
+      if (isNavigationControl(controls[i])) {
+        continue;
+      }
+
       if (isOffline) {
         if (!controls[i].disabled) {
           controls[i].setAttribute("data-offline-disabled", "1");
@@ -11624,6 +11700,23 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
   }, true);
 
   document.addEventListener("click", function (event) {
+    if (!window.navigator.onLine) {
+      var actionControl = event.target && event.target.closest
+        ? event.target.closest("input, textarea, select, button, [onclick]")
+        : null;
+
+      if (
+        actionControl &&
+        actionControl.tagName !== "A" &&
+        !isNavigationControl(actionControl)
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showOfflineMessage();
+        return;
+      }
+    }
+
     var link = event.target && event.target.closest
       ? event.target.closest("a[href]")
       : null;
