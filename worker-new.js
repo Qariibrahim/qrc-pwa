@@ -8633,7 +8633,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v5";
+const VERSION = "imdaderohani-pwa-v6-offline";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -8643,6 +8643,44 @@ const STATIC_CACHE =
 
 const OFFLINE_URL =
   "/offline.html";
+
+/*
+  Ye tamam aham Blogger pages app install/update hote hi cache honge.
+  Naya clean page CLEAN_BLOGGER_ROUTES me add karne ke baad uska path
+  is list me bhi add kar dein.
+*/
+const OFFLINE_PAGE_URLS = [
+  "/home",
+  "/form-kaarguzari",
+  "/quran-shreef",
+  "/naqsh-download",
+  "/form-2",
+  "/janch-rupay",
+  "/ittilaat",
+  "/name-janch",
+  "/qawaneen",
+  "/contact",
+  "/tashkheese-dawa"
+];
+
+async function cacheOfflinePages() {
+  const cache = await caches.open(PAGE_CACHE);
+
+  await Promise.allSettled(
+    OFFLINE_PAGE_URLS.map(async pageUrl => {
+      const request = new Request(pageUrl, {
+        cache: "reload",
+        credentials: "same-origin"
+      });
+
+      const response = await fetch(request);
+
+      if (response && response.ok) {
+        await cache.put(pageUrl, response.clone());
+      }
+    })
+  );
+}
 
 self.addEventListener(
   "install",
@@ -8663,6 +8701,9 @@ self.addEventListener(
               "/pwa-icon-512.png"
             )
           ])
+        )
+        .then(() =>
+          cacheOfflinePages()
         )
         .then(() =>
           self.skipWaiting()
@@ -8769,7 +8810,8 @@ if (
             async () =>
               (
                 await caches.match(
-                  request
+                  request,
+                  { ignoreSearch: true }
                 )
               ) ||
               (
@@ -11479,13 +11521,64 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
     }
   }
 
+  function showOfflineMessage() {
+    window.alert(
+      "Yah suvidha istemal karne ke liye internet zaroori hai. Aap offline halat mein sirf page padh sakte hain."
+    );
+  }
+
+  function updateOfflineReadingMode() {
+    var isOffline = !window.navigator.onLine;
+    var banner = document.getElementById("imdaderohani-offline-banner");
+
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "imdaderohani-offline-banner";
+      banner.setAttribute("role", "status");
+      banner.style.cssText =
+        "position:fixed;left:10px;right:10px;bottom:12px;z-index:2147483647;" +
+        "padding:10px 12px;border-radius:10px;background:#7f1d1d;color:#fff;" +
+        "font:600 14px/1.5 system-ui;text-align:center;box-shadow:0 4px 18px rgba(0,0,0,.28)";
+      banner.textContent =
+        "Offline mode: page padh sakte hain, lekin form, download aur online suvidha band hai.";
+      document.body.appendChild(banner);
+    }
+
+    banner.style.display = isOffline ? "block" : "none";
+
+    var controls = document.querySelectorAll(
+      "form input, form textarea, form select, form button"
+    );
+
+    for (var i = 0; i < controls.length; i++) {
+      if (isOffline) {
+        if (!controls[i].disabled) {
+          controls[i].setAttribute("data-offline-disabled", "1");
+          controls[i].disabled = true;
+        }
+      } else if (controls[i].getAttribute("data-offline-disabled") === "1") {
+        controls[i].disabled = false;
+        controls[i].removeAttribute("data-offline-disabled");
+      }
+    }
+  }
+
   keepCleanUrl();
   rewritePageLinks(document);
 
   document.addEventListener("DOMContentLoaded", function () {
     keepCleanUrl();
     rewritePageLinks(document);
+    updateOfflineReadingMode();
   });
+
+  document.addEventListener("submit", function (event) {
+    if (!window.navigator.onLine) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      showOfflineMessage();
+    }
+  }, true);
 
   document.addEventListener("click", function (event) {
     var link = event.target && event.target.closest
@@ -11493,6 +11586,27 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
       : null;
 
     if (!link) return;
+
+    if (!window.navigator.onLine) {
+      var offlineUrl;
+
+      try {
+        offlineUrl = new URL(link.href, window.location.origin);
+      } catch (_) {
+        offlineUrl = null;
+      }
+
+      if (
+        link.hasAttribute("download") ||
+        !offlineUrl ||
+        offlineUrl.origin !== window.location.origin
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        showOfflineMessage();
+        return;
+      }
+    }
 
     var mapped = getCleanLink(link.getAttribute("href"));
 
@@ -11523,6 +11637,8 @@ function rewriteCleanBloggerHtml(response, cleanPath) {
   });
 
   window.addEventListener("pageshow", keepCleanUrl);
+  window.addEventListener("online", updateOfflineReadingMode);
+  window.addEventListener("offline", updateOfflineReadingMode);
   window.setTimeout(keepCleanUrl, 100);
   window.setTimeout(keepCleanUrl, 700);
   window.setTimeout(keepCleanUrl, 1600);
