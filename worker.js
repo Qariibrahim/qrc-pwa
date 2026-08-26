@@ -1,2 +1,2 @@
 /* Cloudflare main entry file. */
-export { default } from "./worker.new.js";
+export { default } from "./worker-new.js";
