@@ -103,6 +103,11 @@ if (path === "/api/push/broadcast") {
   return handlePushBroadcast(request, env);
 }
 
+/* Public seven-day Notification Box feed */
+if (path === "/api/notifications/inbox") {
+  return handleNotificationInbox(request, env);
+}
+
 /* =========================================================
    CODE NO. PUSH-NOTIFICATION-5001 — PART 5 ROUTE END
    ========================================================= */
@@ -1907,6 +1912,91 @@ async function handlePushTestSend(
    BROADCAST PUSH TO ALL ACTIVE USERS
    ========================================================= */
 
+async function ensureNotificationInboxTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS notification_inbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      target_url TEXT,
+      link_text TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_notification_inbox_expiry
+    ON notification_inbox (expires_at, id)
+  `).run();
+}
+
+async function saveNotificationToInbox(env, data) {
+  await ensureNotificationInboxTable(env);
+
+  const createdAt = new Date().toISOString();
+  const expiresAt = new Date(
+    Date.now() + 7 * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const result = await env.DB.prepare(`
+    INSERT INTO notification_inbox
+      (title, message, target_url, link_text, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `)
+  .bind(
+    data.title,
+    data.message,
+    data.url || "",
+    data.link_text || "",
+    createdAt,
+    expiresAt
+  )
+  .run();
+
+  return {
+    id: result && result.meta ? result.meta.last_row_id : null,
+    created_at: createdAt,
+    expires_at: expiresAt
+  };
+}
+
+async function handleNotificationInbox(request, env) {
+  if (request.method !== "GET") {
+    return methodNotAllowed("GET");
+  }
+
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  await ensureNotificationInboxTable(env);
+
+  const now = new Date().toISOString();
+
+  await env.DB.prepare(`
+    DELETE FROM notification_inbox
+    WHERE expires_at <= ?
+  `).bind(now).run();
+
+  const result = await env.DB.prepare(`
+    SELECT id, title, message, target_url, link_text, created_at, expires_at
+    FROM notification_inbox
+    WHERE expires_at > ?
+    ORDER BY id DESC
+    LIMIT 100
+  `).bind(now).all();
+
+  return jsonResponse({
+    success: true,
+    notifications:
+      result && Array.isArray(result.results)
+        ? result.results
+        : [],
+    server_time: now
+  });
+}
+
 async function handlePushBroadcast(
   request,
   env
@@ -2016,6 +2106,18 @@ const linkText3 =
     url.searchParams.get("link_text3"),
     ""
   ).slice(0, 40);
+
+  /* Admin se bheja har real broadcast website/PWA inbox mein 7 din rahega. */
+  const inboxRecord =
+    await saveNotificationToInbox(
+      env,
+      {
+        title: title,
+        message: message,
+        url: targetUrl,
+        link_text: linkText
+      }
+    );
    
   const rows =
     await env.DB.prepare(
@@ -2362,6 +2464,12 @@ action_text3:
 
       failures:
         failures.slice(0, 50),
+
+      inbox_id:
+        inboxRecord.id,
+
+      inbox_expires_at:
+        inboxRecord.expires_at,
 
       sent_at:
         new Date()
