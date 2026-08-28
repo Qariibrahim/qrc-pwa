@@ -11761,6 +11761,15 @@ if (
   );
 }
 
+if (
+  incomingUrl.pathname === "/p/live-chat-admin-panel.html" &&
+  (response.headers.get("Content-Type") || "")
+    .toLowerCase()
+    .includes("text/html")
+) {
+  return rewriteLiveChatAdminPwaHtml(response);
+}
+
 return response;
 
   } catch (error) {
@@ -11769,6 +11778,33 @@ return response;
       302
     );
   }
+}
+
+/* =========================================================
+   GIVE THE ADMIN PAGE ITS OWN PWA IDENTITY
+   Remove the main-site manifest on this page only, then add
+   the dedicated Live Chat Admin manifest. All other pages and
+   the main Imdade Rohani PWA remain unchanged.
+   ========================================================= */
+
+function rewriteLiveChatAdminPwaHtml(response) {
+  return new HTMLRewriter()
+    .on('link[rel="manifest"]', {
+      element(element) {
+        element.remove();
+      }
+    })
+    .on("head", {
+      element(element) {
+        element.append(
+          '<link rel="manifest" href="/live-chat-admin-manifest.webmanifest">' +
+          '<meta name="application-name" content="Imdade Rohani Live Chat Admin">' +
+          '<meta name="apple-mobile-web-app-title" content="Live Chat Admin">',
+          { html: true }
+        );
+      }
+    })
+    .transform(response);
 }
 
 /* =========================================================
