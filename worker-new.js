@@ -211,7 +211,10 @@ if (path === "/install") {
    Imdade Rohani manifest and does not alter it.
    ============================================= */
 
-if (path === "/install-live-chat-admin") {
+if (
+  path === "/install-live-chat-admin" ||
+  path === "/p/live-chat-admin-install.html"
+) {
   return new Response(liveChatAdminInstallPageHtml(), {
     headers: {
       "Content-Type": "text/html; charset=UTF-8",
@@ -221,14 +224,17 @@ if (path === "/install-live-chat-admin") {
   });
 }
 
-if (path === "/live-chat-admin-manifest.webmanifest") {
+if (
+  path === "/live-chat-admin-manifest.webmanifest" ||
+  path === "/live-chat-admin-v2.webmanifest"
+) {
   const adminManifest = {
-    id: "/live-chat-admin",
+    id: "/p/live-chat-admin-app",
     name: "Imdade Rohani Live Chat Admin",
     short_name: "Live Chat Admin",
     description: "Imdade Rohani Live Chat ka mehfooz admin panel.",
     start_url: "/p/live-chat-admin-panel.html?source=admin-pwa",
-    scope: "/",
+    scope: "/p/",
     lang: "hi",
     dir: "ltr",
     display: "standalone",
@@ -10195,7 +10201,7 @@ function liveChatAdminInstallPageHtml() {
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#1746a2">
   <title>Imdade Rohani Live Chat Admin Install</title>
-  <link rel="manifest" href="/live-chat-admin-manifest.webmanifest">
+  <link rel="manifest" href="/live-chat-admin-v2.webmanifest">
   <link rel="icon" href="/pwa-icon-192.png">
   <style>
     *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:18px;background:linear-gradient(145deg,#e9f2ff,#f8fbff);font-family:Arial,sans-serif;color:#172033}
@@ -11797,7 +11803,7 @@ function rewriteLiveChatAdminPwaHtml(response) {
     .on("head", {
       element(element) {
         element.append(
-          '<link rel="manifest" href="/live-chat-admin-manifest.webmanifest">' +
+          '<link rel="manifest" href="/live-chat-admin-v2.webmanifest">' +
           '<meta name="application-name" content="Imdade Rohani Live Chat Admin">' +
           '<meta name="apple-mobile-web-app-title" content="Live Chat Admin">',
           { html: true }
