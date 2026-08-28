@@ -47,6 +47,16 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
+      /* =============================================
+         LIVE CHAT ADMIN — INDEPENDENT SUBDOMAIN PWA
+         Keep this host branch before every qrc route so
+         the existing Imdade Rohani PWA remains untouched.
+         ============================================= */
+
+      if (url.hostname === "live-chat-admin.imdaderohani.in") {
+        return handleLiveChatAdminSubdomain(request, url);
+      }
+
         /* ==========================================
            PROFESSIONAL CUSTOM 404 PAGE ROUTE
            ========================================== */
@@ -10232,6 +10242,161 @@ function liveChatAdminInstallPageHtml() {
       button.addEventListener("click",function(){if(!promptEvent){status.textContent="Chrome menu ke three dots mein ‘Install app’ ya ‘Add to Home screen’ dabayen.";return;}button.disabled=true;promptEvent.prompt();promptEvent.userChoice.then(function(choice){status.textContent=choice.outcome==="accepted"?"Admin application install ho rahi hai.":"Installation filhal radd kar di gayi.";promptEvent=null;});});
       window.addEventListener("appinstalled",function(){button.disabled=true;status.textContent="Live Chat Admin application kamyabi se install ho gayi.";});
       window.setTimeout(function(){if(!promptEvent){button.disabled=false;status.textContent="Agar button se popup na aaye to Chrome menu (⋮) se ‘Install app’ dabayen.";}},3500);
+    })();
+  <\/script>
+</body>
+</html>`;
+}
+
+/* =========================================================
+   LIVE CHAT ADMIN — INDEPENDENT SUBDOMAIN PWA
+   The admin panel itself remains on qrc.imdaderohani.in.
+   This same-site wrapper gives Chrome a separate origin and
+   therefore a genuinely separate installable application.
+   ========================================================= */
+
+async function handleLiveChatAdminSubdomain(request, url) {
+  const path = url.pathname;
+
+  if (request.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
+    });
+  }
+
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return new Response("Method Not Allowed", {
+      status: 405,
+      headers: { "Allow": "GET, HEAD, OPTIONS" }
+    });
+  }
+
+  if (path === "/manifest.webmanifest") {
+    const manifest = {
+      id: "/",
+      name: "Imdade Rohani Live Chat Admin",
+      short_name: "Live Chat Admin",
+      description: "Imdade Rohani Live Chat ka mehfooz admin panel.",
+      start_url: "/?source=admin-pwa",
+      scope: "/",
+      lang: "hi",
+      dir: "ltr",
+      display: "standalone",
+      orientation: "portrait-primary",
+      background_color: "#eef5ff",
+      theme_color: "#1746a2",
+      icons: [
+        { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+        { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+        { src: "/pwa-icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+        { src: "/pwa-icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
+      ]
+    };
+
+    return new Response(JSON.stringify(manifest, null, 2), {
+      headers: {
+        "Content-Type": "application/manifest+json; charset=UTF-8",
+        "Cache-Control": "public, max-age=3600",
+        "X-Content-Type-Options": "nosniff"
+      }
+    });
+  }
+
+  if (path === "/service-worker.js") {
+    return new Response(liveChatAdminSubdomainServiceWorker(), {
+      headers: {
+        "Content-Type": "application/javascript; charset=UTF-8",
+        "Service-Worker-Allowed": "/",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "X-Content-Type-Options": "nosniff"
+      }
+    });
+  }
+
+  if (path === "/pwa-icon-192.png" || path === "/pwa-icon-512.png") {
+    const iconResponse = await fetch(LOGO_URL);
+    const headers = new Headers(iconResponse.headers);
+    headers.set("Cache-Control", "public, max-age=86400");
+    headers.set("X-Content-Type-Options", "nosniff");
+    return new Response(iconResponse.body, {
+      status: iconResponse.status,
+      headers
+    });
+  }
+
+  if (path === "/" || path === "/index.html") {
+    return new Response(liveChatAdminSubdomainHtml(), {
+      headers: {
+        "Content-Type": "text/html; charset=UTF-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+        "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-src https://qrc.imdaderohani.in; connect-src 'self'",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Content-Type-Options": "nosniff"
+      }
+    });
+  }
+
+  return Response.redirect("https://live-chat-admin.imdaderohani.in/", 302);
+}
+
+function liveChatAdminSubdomainServiceWorker() {
+  return `const CACHE_NAME="imdaderohani-live-chat-admin-shell-v1";
+const SHELL=["/","/manifest.webmanifest","/pwa-icon-192.png","/pwa-icon-512.png"];
+self.addEventListener("install",event=>{event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));});
+self.addEventListener("activate",event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
+self.addEventListener("fetch",event=>{if(event.request.method!=="GET")return;const url=new URL(event.request.url);if(url.origin!==self.location.origin)return;event.respondWith(fetch(event.request).catch(()=>caches.match(event.request).then(response=>response||caches.match("/"))));});`;
+}
+
+function liveChatAdminSubdomainHtml() {
+  return `<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1746a2">
+  <meta name="application-name" content="Imdade Rohani Live Chat Admin">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Live Chat Admin">
+  <title>Imdade Rohani Live Chat Admin</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/pwa-icon-192.png">
+  <style>
+    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#eef5ff;font-family:Arial,sans-serif}
+    #adminFrame{display:block;width:100%;height:100%;border:0;background:#eef5ff}
+    #installBar{position:fixed;z-index:10;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(92%,420px);display:none;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:#fff;box-shadow:0 10px 35px rgba(0,32,135,.28);color:#172033}
+    #installBar img{width:42px;height:42px;border-radius:11px;object-fit:cover}#installText{flex:1;font-size:13px;line-height:1.35;font-weight:700}
+    #installButton{border:0;border-radius:11px;background:#1746a2;color:#fff;padding:11px 14px;font-weight:700;font-size:14px}#dismissButton{border:0;background:transparent;color:#526071;font-size:24px;line-height:1;padding:5px}
+    #loading{position:fixed;inset:0;display:grid;place-items:center;background:#eef5ff;color:#1746a2;font-size:16px;font-weight:700;z-index:5}#loading.hidden{display:none}
+  </style>
+</head>
+<body>
+  <div id="loading">Live Chat Admin khul raha hai…</div>
+  <iframe id="adminFrame" title="Imdade Rohani Live Chat Admin" src="https://qrc.imdaderohani.in/p/live-chat-admin-panel.html?source=admin-subdomain-pwa" allow="microphone; camera; clipboard-read; clipboard-write; fullscreen" allowfullscreen></iframe>
+  <div id="installBar">
+    <img src="/pwa-icon-192.png" alt="">
+    <div id="installText">Live Chat Admin ko alag app banayen</div>
+    <button id="installButton" type="button">Install</button>
+    <button id="dismissButton" type="button" aria-label="Band karein">×</button>
+  </div>
+  <script>
+    (function(){
+      var deferredPrompt=null;
+      var frame=document.getElementById("adminFrame");
+      var loading=document.getElementById("loading");
+      var bar=document.getElementById("installBar");
+      var installButton=document.getElementById("installButton");
+      frame.addEventListener("load",function(){loading.className="hidden";});
+      if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js",{scope:"/"}).catch(function(){});}
+      window.addEventListener("beforeinstallprompt",function(event){event.preventDefault();deferredPrompt=event;bar.style.display="flex";});
+      installButton.addEventListener("click",function(){if(!deferredPrompt)return;deferredPrompt.prompt();deferredPrompt.userChoice.then(function(){deferredPrompt=null;bar.style.display="none";});});
+      document.getElementById("dismissButton").addEventListener("click",function(){bar.style.display="none";});
+      window.addEventListener("appinstalled",function(){deferredPrompt=null;bar.style.display="none";});
     })();
   <\/script>
 </body>
