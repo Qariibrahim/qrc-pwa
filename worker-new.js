@@ -204,6 +204,54 @@ if (path === "/install") {
     }
   });
 }
+
+/* =============================================
+   LIVE CHAT ADMIN — SEPARATE PWA
+   This is intentionally separate from the main
+   Imdade Rohani manifest and does not alter it.
+   ============================================= */
+
+if (path === "/install-live-chat-admin") {
+  return new Response(liveChatAdminInstallPageHtml(), {
+    headers: {
+      "Content-Type": "text/html; charset=UTF-8",
+      "Cache-Control": "no-store, no-cache, must-revalidate",
+      "X-Content-Type-Options": "nosniff"
+    }
+  });
+}
+
+if (path === "/live-chat-admin-manifest.webmanifest") {
+  const adminManifest = {
+    id: "/live-chat-admin",
+    name: "Imdade Rohani Live Chat Admin",
+    short_name: "Live Chat Admin",
+    description: "Imdade Rohani Live Chat ka mehfooz admin panel.",
+    start_url: "/p/live-chat-admin-panel.html?source=admin-pwa",
+    scope: "/",
+    lang: "hi",
+    dir: "ltr",
+    display: "standalone",
+    orientation: "portrait-primary",
+    background_color: "#eef5ff",
+    theme_color: "#1746a2",
+    icons: [
+      { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
+      { src: "/pwa-icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/pwa-icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
+    ]
+  };
+
+  return new Response(JSON.stringify(adminManifest, null, 2), {
+    headers: {
+      "Content-Type": "application/manifest+json; charset=UTF-8",
+      "Cache-Control": "public, max-age=3600",
+      "Access-Control-Allow-Origin": "*",
+      "X-Content-Type-Options": "nosniff"
+    }
+  });
+}
        
       /* =============================================
          PWA MANIFEST
@@ -10138,6 +10186,51 @@ button{
 /* =========================================================
    DIRECT PWA INSTALL PAGE
    ========================================================= */
+
+function liveChatAdminInstallPageHtml() {
+  return `<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#1746a2">
+  <title>Imdade Rohani Live Chat Admin Install</title>
+  <link rel="manifest" href="/live-chat-admin-manifest.webmanifest">
+  <link rel="icon" href="/pwa-icon-192.png">
+  <style>
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:18px;background:linear-gradient(145deg,#e9f2ff,#f8fbff);font-family:Arial,sans-serif;color:#172033}
+    .admin-install{width:min(430px,100%);padding:25px 20px;border:1px solid #d5dfed;border-radius:22px;background:#fff;box-shadow:0 18px 48px rgba(23,70,162,.18);text-align:center}
+    .admin-logo{width:86px;height:86px;border-radius:24px;object-fit:cover;box-shadow:0 8px 22px rgba(23,70,162,.22)}
+    h1{margin:15px 0 8px;font-size:24px;color:#1746a2}p{margin:8px 0 18px;line-height:1.65;color:#526071;font-size:15px}
+    button,a{width:100%;min-height:50px;border:0;border-radius:13px;padding:13px 16px;font-size:16px;font-weight:700;text-decoration:none;display:grid;place-items:center;cursor:pointer}
+    #adminInstallButton{background:#1746a2;color:#fff}#adminInstallButton:disabled{opacity:.58;cursor:default}.open-admin{margin-top:11px;background:#eaf1fb;color:#1746a2}
+    #adminInstallStatus{min-height:44px;margin-top:14px;padding:10px;border-radius:10px;background:#f6f8fb;color:#485568;font-size:13px;line-height:1.55}
+  </style>
+</head>
+<body>
+  <main class="admin-install">
+    <img class="admin-logo" src="/pwa-icon-192.png" alt="Imdade Rohani">
+    <h1>Live Chat Admin App</h1>
+    <p>Admin panel ko mobile mein alag application ki tarah install karein. App khulte hi seedha Live Chat Admin Panel khulega.</p>
+    <button id="adminInstallButton" type="button" disabled>Install Admin App</button>
+    <a class="open-admin" href="/p/live-chat-admin-panel.html">Admin Panel Kholain</a>
+    <div id="adminInstallStatus">Install option tayyar ho raha hai…</div>
+  </main>
+  <script>
+    (function(){
+      var promptEvent=null;
+      var button=document.getElementById("adminInstallButton");
+      var status=document.getElementById("adminInstallStatus");
+      if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js",{scope:"/"}).catch(function(){});}
+      window.addEventListener("beforeinstallprompt",function(event){event.preventDefault();promptEvent=event;button.disabled=false;status.textContent="Admin application install ke liye tayyar hai.";});
+      button.addEventListener("click",function(){if(!promptEvent){status.textContent="Chrome menu ke three dots mein ‘Install app’ ya ‘Add to Home screen’ dabayen.";return;}button.disabled=true;promptEvent.prompt();promptEvent.userChoice.then(function(choice){status.textContent=choice.outcome==="accepted"?"Admin application install ho rahi hai.":"Installation filhal radd kar di gayi.";promptEvent=null;});});
+      window.addEventListener("appinstalled",function(){button.disabled=true;status.textContent="Live Chat Admin application kamyabi se install ho gayi.";});
+      window.setTimeout(function(){if(!promptEvent){button.disabled=false;status.textContent="Agar button se popup na aaye to Chrome menu (⋮) se ‘Install app’ dabayen.";}},3500);
+    })();
+  <\/script>
+</body>
+</html>`;
+}
 
 function installPageHtml() {
   return `<!doctype html>
