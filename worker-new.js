@@ -63,6 +63,18 @@ export default {
         );
       }
 
+      if (
+        url.hostname === "live-chat-admin.imdaderohani.in" &&
+        path === "/repair-live-chat-admin"
+      ) {
+        return new Response(`<!doctype html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Live Chat Admin Repair</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef5ff;font-family:Arial,sans-serif;color:#17305f}.box{width:min(420px,88%);padding:28px;border-radius:22px;background:#fff;text-align:center;box-shadow:0 12px 38px #1746a233}h2{color:#1746a2}p{line-height:1.7}</style></head><body><main class="box"><h2>Live Chat Admin theek ho rahi hai</h2><p id="status">Purana cache saaf karke Admin Panel khola ja raha hai…</p></main><script>(async function(){var target='/p/live-chat-admin-panel.html?source=admin-pwa&repaired=1';try{if('caches'in window){var keys=await caches.keys();await Promise.all(keys.map(function(key){return caches.delete(key);}));}if('serviceWorker'in navigator){var regs=await navigator.serviceWorker.getRegistrations();await Promise.all(regs.map(function(reg){return reg.update().catch(function(){});}));regs.forEach(function(reg){if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});});}}catch(e){}setTimeout(function(){location.replace(target);},2500);}());<\/script></body></html>`, {
+          headers:{
+            "Content-Type":"text/html; charset=UTF-8",
+            "Cache-Control":"no-store, no-cache, must-revalidate"
+          }
+        });
+      }
+
         /* ==========================================
            PROFESSIONAL CUSTOM 404 PAGE ROUTE
            ========================================== */
@@ -9002,7 +9014,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v8-offline-posts";
+const VERSION = "imdaderohani-pwa-v9-admin-route-recovery";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -9184,6 +9196,29 @@ self.addEventListener(
         .then(() =>
           self.clients.claim()
         )
+        .then(async () => {
+          if (self.location.hostname !== "live-chat-admin.imdaderohani.in") return;
+          const adminPath = new URL(
+            "/p/live-chat-admin-panel.html?source=admin-pwa",
+            self.location.origin
+          ).href;
+          const openClients = await self.clients.matchAll({
+            type: "window",
+            includeUncontrolled: true
+          });
+          await Promise.allSettled(openClients.map(client => {
+            try {
+              const clientUrl = new URL(client.url);
+              if (
+                (clientUrl.pathname === "/" || clientUrl.pathname === "/home") &&
+                "navigate" in client
+              ) {
+                return client.navigate(adminPath);
+              }
+            } catch (_) {}
+            return Promise.resolve();
+          }));
+        })
     );
   }
 );
@@ -9203,6 +9238,21 @@ self.addEventListener(
 
     const requestUrl =
       new URL(request.url);
+
+    if (
+      request.mode === "navigate" &&
+      requestUrl.hostname === "live-chat-admin.imdaderohani.in" &&
+      (requestUrl.pathname === "/" || requestUrl.pathname === "/home")
+    ) {
+      event.respondWith(Response.redirect(
+        new URL(
+          "/p/live-chat-admin-panel.html?source=admin-pwa",
+          self.location.origin
+        ).href,
+        302
+      ));
+      return;
+    }
 
     if (
       requestUrl.pathname
@@ -9546,6 +9596,13 @@ self.addEventListener(
 
     let targetUrl =
       notificationData.url || "";
+
+    if (
+      notificationData.notification_type === "live_chat_admin" &&
+      self.location.hostname === "live-chat-admin.imdaderohani.in"
+    ) {
+      targetUrl = "/p/live-chat-admin-panel.html?source=admin-pwa";
+    }
 
     if (
       event.action === "open_link_2"
