@@ -10,6 +10,10 @@ const LOGO_URL =
 
 const DEFAULT_APP_VERSION = "2";
 
+const LIVE_CHAT_ADMIN_UID = "7ybBWGwZipX3sM9iLrdGIgOo3l92";
+const FIREBASE_WEB_API_KEY = "AIzaSyC6bhgW8pXu_LFlJ9SvTrveXj-nKLsdQws";
+const LIVE_CHAT_ADMIN_ORIGIN = "https://live-chat-admin.imdaderohani.in";
+
 /* =========================================================
    CLEAN CUSTOM BLOGGER URLS
    Left side  = URL visible in the browser
@@ -47,16 +51,6 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
-      /* =============================================
-         LIVE CHAT ADMIN — INDEPENDENT SUBDOMAIN PWA
-         Keep this host branch before every qrc route so
-         the existing Imdade Rohani PWA remains untouched.
-         ============================================= */
-
-      if (url.hostname === "live-chat-admin.imdaderohani.in") {
-        return handleLiveChatAdminSubdomain(request, url);
-      }
-
         /* ==========================================
            PROFESSIONAL CUSTOM 404 PAGE ROUTE
            ========================================== */
@@ -91,6 +85,15 @@ export default {
 
 if (path === "/api/push/register") {
   return handlePushRegister(request, env);
+}
+
+/* Android Admin PWA: private token registration + new-chat push */
+if (path === "/api/live-chat/admin-push/register") {
+  return handleLiveChatAdminPushRegister(request, env);
+}
+
+if (path === "/api/live-chat/admin-push/notify") {
+  return handleLiveChatAdminPushNotify(request, env);
 }
 
 /* =========================================================
@@ -1241,6 +1244,185 @@ async function handleEmailTest(
    CODE NO. PUSH-NOTIFICATION-5001 — PART 3B
    SAVE FCM TOKEN IN D1
    ========================================================= */
+
+function bearerToken(request) {
+  const value = request.headers.get("Authorization") || "";
+  return value.startsWith("Bearer ") ? value.slice(7).trim() : "";
+}
+
+async function verifyLiveChatFirebaseUser(request) {
+  const idToken = bearerToken(request);
+  if (!idToken || idToken.length < 100) return null;
+
+  const response = await fetch(
+    "https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=" +
+      encodeURIComponent(FIREBASE_WEB_API_KEY),
+    {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({idToken})
+    }
+  );
+
+  if (!response.ok) return null;
+  const data = await response.json();
+  const user = data && Array.isArray(data.users) ? data.users[0] : null;
+  return user && user.localId ? String(user.localId) : null;
+}
+
+async function ensureLiveChatAdminPushTables(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS live_chat_admin_push_tokens (
+      token TEXT PRIMARY KEY,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS live_chat_push_events (
+      event_id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+}
+
+async function handleLiveChatAdminPushRegister(request, env) {
+  if (request.method !== "POST") return methodNotAllowed("POST");
+  if (!env.DB) return databaseMissingResponse();
+
+  const uid = await verifyLiveChatFirebaseUser(request);
+  if (uid !== LIVE_CHAT_ADMIN_UID) {
+    return jsonResponse({success:false,error:"Admin authorization required."}, 401);
+  }
+
+  const body = await readJsonBody(request);
+  const token = cleanText(body.token);
+  if (!token || token.length < 50 || token.length > 4096) {
+    return jsonResponse({success:false,error:"Valid admin FCM token required."}, 400);
+  }
+
+  await ensureLiveChatAdminPushTables(env);
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO live_chat_admin_push_tokens
+      (token, status, created_at, updated_at)
+    VALUES (?, 'active', ?, ?)
+    ON CONFLICT(token) DO UPDATE SET
+      status='active', updated_at=excluded.updated_at
+  `).bind(token, now, now).run();
+
+  return jsonResponse({success:true,event:"live_chat_admin_push_registered"});
+}
+
+async function sendLiveChatAdminPush(env, token, details) {
+  const accessToken = await getFirebaseAccessToken(env);
+  const typeLabels = {
+    text: "naya message",
+    image: "nayi image",
+    video: "nayi video",
+    audio: "naya audio",
+    pdf: "nayi PDF",
+    document: "nayi file"
+  };
+  const name = String(details.name || "User").slice(0, 45);
+  const kind = typeLabels[details.content_type] || typeLabels.text;
+  const title = "Live Chat: " + name;
+  const body = name + " ne " + kind + " bheja hai.";
+  const target = LIVE_CHAT_ADMIN_ORIGIN + "/";
+  const payload = {
+    message: {
+      token: String(token),
+      data: {
+        title,
+        body,
+        tag: "live-chat-" + String(details.event_id),
+        url: target,
+        chat_id: String(details.chat_id),
+        event_id: String(details.event_id),
+        notification_type: "live_chat_admin"
+      },
+      webpush: {
+        headers: {Urgency:"high", TTL:"86400"},
+        fcm_options: {link:target}
+      }
+    }
+  };
+
+  return fetch(
+    "https://fcm.googleapis.com/v1/projects/" +
+      encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
+      "/messages:send",
+    {
+      method:"POST",
+      headers:{Authorization:"Bearer " + accessToken,"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }
+  );
+}
+
+async function handleLiveChatAdminPushNotify(request, env) {
+  if (request.method !== "POST") return methodNotAllowed("POST");
+  if (!env.DB) return databaseMissingResponse();
+
+  const uid = await verifyLiveChatFirebaseUser(request);
+  const body = await readJsonBody(request);
+  const chatId = cleanText(body.chat_id);
+  const eventId = cleanText(body.event_id);
+  const contentType = cleanText(body.content_type).toLowerCase();
+  const name = cleanText(body.name);
+
+  if (!uid || uid !== chatId) {
+    return jsonResponse({success:false,error:"Chat authorization failed."}, 401);
+  }
+  if (!/^[A-Za-z0-9_-]{8,160}$/.test(eventId)) {
+    return jsonResponse({success:false,error:"Valid event id required."}, 400);
+  }
+
+  await ensureLiveChatAdminPushTables(env);
+  const now = new Date().toISOString();
+  const insert = await env.DB.prepare(`
+    INSERT OR IGNORE INTO live_chat_push_events
+      (event_id, chat_id, created_at)
+    VALUES (?, ?, ?)
+  `).bind(eventId, chatId, now).run();
+
+  if (!insert.meta || Number(insert.meta.changes || 0) === 0) {
+    return jsonResponse({success:true,event:"duplicate_ignored"});
+  }
+
+  const tokenRows = await env.DB.prepare(`
+    SELECT token FROM live_chat_admin_push_tokens
+    WHERE status='active' ORDER BY updated_at DESC LIMIT 5
+  `).all();
+  const tokens = tokenRows && tokenRows.results ? tokenRows.results : [];
+  if (!tokens.length) {
+    return jsonResponse({success:true,event:"no_admin_device_registered"});
+  }
+
+  const details = {
+    chat_id:chatId,
+    event_id:eventId,
+    content_type:/^(text|image|video|audio|pdf|document)$/.test(contentType) ? contentType : "text",
+    name:name || "User"
+  };
+  const results = await Promise.allSettled(tokens.map(function(row) {
+    return sendLiveChatAdminPush(env, row.token, details);
+  }));
+  const sent = results.filter(function(result) {
+    return result.status === "fulfilled" && result.value && result.value.ok;
+  }).length;
+
+  /* Deduplication rows ko chhota rakhein. */
+  await env.DB.prepare(`
+    DELETE FROM live_chat_push_events
+    WHERE created_at < datetime('now','-7 days')
+  `).run().catch(function(){});
+
+  return jsonResponse({success:true,event:"live_chat_admin_push_sent",sent});
+}
 
 async function handlePushRegister(
   request,
@@ -9313,7 +9495,16 @@ data: {
     targetUrl2,
 
   url3:
-    targetUrl3
+    targetUrl3,
+
+  chat_id:
+    data.chat_id || "",
+
+  event_id:
+    data.event_id || "",
+
+  notification_type:
+    data.notification_type || ""
 }
 
     };
@@ -10242,161 +10433,6 @@ function liveChatAdminInstallPageHtml() {
       button.addEventListener("click",function(){if(!promptEvent){status.textContent="Chrome menu ke three dots mein ‘Install app’ ya ‘Add to Home screen’ dabayen.";return;}button.disabled=true;promptEvent.prompt();promptEvent.userChoice.then(function(choice){status.textContent=choice.outcome==="accepted"?"Admin application install ho rahi hai.":"Installation filhal radd kar di gayi.";promptEvent=null;});});
       window.addEventListener("appinstalled",function(){button.disabled=true;status.textContent="Live Chat Admin application kamyabi se install ho gayi.";});
       window.setTimeout(function(){if(!promptEvent){button.disabled=false;status.textContent="Agar button se popup na aaye to Chrome menu (⋮) se ‘Install app’ dabayen.";}},3500);
-    })();
-  <\/script>
-</body>
-</html>`;
-}
-
-/* =========================================================
-   LIVE CHAT ADMIN — INDEPENDENT SUBDOMAIN PWA
-   The admin panel itself remains on qrc.imdaderohani.in.
-   This same-site wrapper gives Chrome a separate origin and
-   therefore a genuinely separate installable application.
-   ========================================================= */
-
-async function handleLiveChatAdminSubdomain(request, url) {
-  const path = url.pathname;
-
-  if (request.method === "OPTIONS") {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-      }
-    });
-  }
-
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return new Response("Method Not Allowed", {
-      status: 405,
-      headers: { "Allow": "GET, HEAD, OPTIONS" }
-    });
-  }
-
-  if (path === "/manifest.webmanifest") {
-    const manifest = {
-      id: "/",
-      name: "Imdade Rohani Live Chat Admin",
-      short_name: "Live Chat Admin",
-      description: "Imdade Rohani Live Chat ka mehfooz admin panel.",
-      start_url: "/?source=admin-pwa",
-      scope: "/",
-      lang: "hi",
-      dir: "ltr",
-      display: "standalone",
-      orientation: "portrait-primary",
-      background_color: "#eef5ff",
-      theme_color: "#1746a2",
-      icons: [
-        { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-        { src: "/pwa-icon-192.png", sizes: "192x192", type: "image/png", purpose: "maskable" },
-        { src: "/pwa-icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-        { src: "/pwa-icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" }
-      ]
-    };
-
-    return new Response(JSON.stringify(manifest, null, 2), {
-      headers: {
-        "Content-Type": "application/manifest+json; charset=UTF-8",
-        "Cache-Control": "public, max-age=3600",
-        "X-Content-Type-Options": "nosniff"
-      }
-    });
-  }
-
-  if (path === "/service-worker.js") {
-    return new Response(liveChatAdminSubdomainServiceWorker(), {
-      headers: {
-        "Content-Type": "application/javascript; charset=UTF-8",
-        "Service-Worker-Allowed": "/",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        "X-Content-Type-Options": "nosniff"
-      }
-    });
-  }
-
-  if (path === "/pwa-icon-192.png" || path === "/pwa-icon-512.png") {
-    const iconResponse = await fetch(LOGO_URL);
-    const headers = new Headers(iconResponse.headers);
-    headers.set("Cache-Control", "public, max-age=86400");
-    headers.set("X-Content-Type-Options", "nosniff");
-    return new Response(iconResponse.body, {
-      status: iconResponse.status,
-      headers
-    });
-  }
-
-  if (path === "/" || path === "/index.html") {
-    return new Response(liveChatAdminSubdomainHtml(), {
-      headers: {
-        "Content-Type": "text/html; charset=UTF-8",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-        "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; frame-src https://qrc.imdaderohani.in; connect-src 'self'",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "X-Content-Type-Options": "nosniff"
-      }
-    });
-  }
-
-  return Response.redirect("https://live-chat-admin.imdaderohani.in/", 302);
-}
-
-function liveChatAdminSubdomainServiceWorker() {
-  return `const CACHE_NAME="imdaderohani-live-chat-admin-shell-v1";
-const SHELL=["/","/manifest.webmanifest","/pwa-icon-192.png","/pwa-icon-512.png"];
-self.addEventListener("install",event=>{event.waitUntil(caches.open(CACHE_NAME).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()));});
-self.addEventListener("activate",event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(key=>key!==CACHE_NAME).map(key=>caches.delete(key)))).then(()=>self.clients.claim()));});
-self.addEventListener("fetch",event=>{if(event.request.method!=="GET")return;const url=new URL(event.request.url);if(url.origin!==self.location.origin)return;event.respondWith(fetch(event.request).catch(()=>caches.match(event.request).then(response=>response||caches.match("/"))));});`;
-}
-
-function liveChatAdminSubdomainHtml() {
-  return `<!doctype html>
-<html lang="hi">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#1746a2">
-  <meta name="application-name" content="Imdade Rohani Live Chat Admin">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Live Chat Admin">
-  <title>Imdade Rohani Live Chat Admin</title>
-  <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/pwa-icon-192.png">
-  <style>
-    *{box-sizing:border-box}html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#eef5ff;font-family:Arial,sans-serif}
-    #adminFrame{display:block;width:100%;height:100%;border:0;background:#eef5ff}
-    #installBar{position:fixed;z-index:10;left:50%;bottom:max(14px,env(safe-area-inset-bottom));transform:translateX(-50%);width:min(92%,420px);display:none;align-items:center;gap:10px;padding:10px 12px;border-radius:16px;background:#fff;box-shadow:0 10px 35px rgba(0,32,135,.28);color:#172033}
-    #installBar img{width:42px;height:42px;border-radius:11px;object-fit:cover}#installText{flex:1;font-size:13px;line-height:1.35;font-weight:700}
-    #installButton{border:0;border-radius:11px;background:#1746a2;color:#fff;padding:11px 14px;font-weight:700;font-size:14px}#dismissButton{border:0;background:transparent;color:#526071;font-size:24px;line-height:1;padding:5px}
-    #loading{position:fixed;inset:0;display:grid;place-items:center;background:#eef5ff;color:#1746a2;font-size:16px;font-weight:700;z-index:5}#loading.hidden{display:none}
-  </style>
-</head>
-<body>
-  <div id="loading">Live Chat Admin khul raha hai…</div>
-  <iframe id="adminFrame" title="Imdade Rohani Live Chat Admin" src="https://qrc.imdaderohani.in/p/live-chat-admin-panel.html?source=admin-subdomain-pwa" allow="microphone; camera; clipboard-read; clipboard-write; fullscreen" allowfullscreen></iframe>
-  <div id="installBar">
-    <img src="/pwa-icon-192.png" alt="">
-    <div id="installText">Live Chat Admin ko alag app banayen</div>
-    <button id="installButton" type="button">Install</button>
-    <button id="dismissButton" type="button" aria-label="Band karein">×</button>
-  </div>
-  <script>
-    (function(){
-      var deferredPrompt=null;
-      var frame=document.getElementById("adminFrame");
-      var loading=document.getElementById("loading");
-      var bar=document.getElementById("installBar");
-      var installButton=document.getElementById("installButton");
-      frame.addEventListener("load",function(){loading.className="hidden";});
-      if("serviceWorker" in navigator){navigator.serviceWorker.register("/service-worker.js",{scope:"/"}).catch(function(){});}
-      window.addEventListener("beforeinstallprompt",function(event){event.preventDefault();deferredPrompt=event;bar.style.display="flex";});
-      installButton.addEventListener("click",function(){if(!deferredPrompt)return;deferredPrompt.prompt();deferredPrompt.userChoice.then(function(){deferredPrompt=null;bar.style.display="none";});});
-      document.getElementById("dismissButton").addEventListener("click",function(){bar.style.display="none";});
-      window.addEventListener("appinstalled",function(){deferredPrompt=null;bar.style.display="none";});
     })();
   <\/script>
 </body>
