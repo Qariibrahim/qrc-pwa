@@ -51,6 +51,18 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
+      /* Dedicated Admin domain ka root kabhi main blog na khole. */
+      if (
+        url.hostname === "live-chat-admin.imdaderohani.in" &&
+        path === "/"
+      ) {
+        return Response.redirect(
+          LIVE_CHAT_ADMIN_ORIGIN +
+            "/p/live-chat-admin-panel.html?source=admin-pwa",
+          302
+        );
+      }
+
         /* ==========================================
            PROFESSIONAL CUSTOM 404 PAGE ROUTE
            ========================================== */
@@ -1331,7 +1343,8 @@ async function sendLiveChatAdminPush(env, token, details) {
   const kind = typeLabels[details.content_type] || typeLabels.text;
   const title = "Live Chat: " + name;
   const body = name + " ne " + kind + " bheja hai.";
-  const target = LIVE_CHAT_ADMIN_ORIGIN + "/";
+  const target = LIVE_CHAT_ADMIN_ORIGIN +
+    "/p/live-chat-admin-panel.html?source=admin-pwa";
   const payload = {
     message: {
       token: String(token),
