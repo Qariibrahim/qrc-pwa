@@ -1383,7 +1383,8 @@ async function sendLiveChatAdminPush(env, token, details) {
   const name = String(details.name || "User").slice(0, 45);
   const kind = typeLabels[details.content_type] || typeLabels.text;
   const title = "Live Chat: " + name;
-  const body = name + " ne " + kind + " bheja hai.";
+  const preview = String(details.preview || "").replace(/\s+/g," ").trim().slice(0,120);
+  const body = preview || (name + " ne " + kind + " bheja hai.");
   const target = LIVE_CHAT_ADMIN_ORIGIN +
     "/p/live-chat-admin-panel.html?source=admin-pwa";
   const payload = {
@@ -1427,6 +1428,7 @@ async function handleLiveChatAdminPushNotify(request, env) {
   const eventId = cleanText(body.event_id);
   const contentType = cleanText(body.content_type).toLowerCase();
   const name = cleanText(body.name);
+  const preview = cleanText(body.preview);
 
   if (!uid || uid !== chatId) {
     return jsonResponse({success:false,error:"Chat authorization failed."}, 401);
@@ -1460,7 +1462,8 @@ async function handleLiveChatAdminPushNotify(request, env) {
     chat_id:chatId,
     event_id:eventId,
     content_type:/^(text|image|video|audio|pdf|document)$/.test(contentType) ? contentType : "text",
-    name:name || "User"
+    name:name || "User",
+    preview:preview
   };
   const results = await Promise.allSettled(tokens.map(function(row) {
     return sendLiveChatAdminPush(env, row.token, details);
@@ -9132,7 +9135,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v10-admin-route-v22";
+const VERSION = "imdaderohani-pwa-v11-live-chat-preview-v24";
 
 const PAGE_CACHE =
   VERSION + "-pages";
