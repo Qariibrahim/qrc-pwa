@@ -63,18 +63,6 @@ export default {
         );
       }
 
-      if (
-        url.hostname === "live-chat-admin.imdaderohani.in" &&
-        path === "/repair-live-chat-admin"
-      ) {
-        return new Response(`<!doctype html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Live Chat Admin Repair</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#eef5ff;font-family:Arial,sans-serif;color:#17305f}.box{width:min(420px,88%);padding:28px;border-radius:22px;background:#fff;text-align:center;box-shadow:0 12px 38px #1746a233}h2{color:#1746a2}p{line-height:1.7}</style></head><body><main class="box"><h2>Live Chat Admin theek ho rahi hai</h2><p id="status">Purana cache saaf karke Admin Panel khola ja raha hai…</p></main><script>(async function(){var target='/p/live-chat-admin-panel.html?source=admin-pwa&repaired=1';try{if('caches'in window){var keys=await caches.keys();await Promise.all(keys.map(function(key){return caches.delete(key);}));}if('serviceWorker'in navigator){var regs=await navigator.serviceWorker.getRegistrations();await Promise.all(regs.map(function(reg){return reg.update().catch(function(){});}));regs.forEach(function(reg){if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});});}}catch(e){}setTimeout(function(){location.replace(target);},2500);}());<\/script></body></html>`, {
-          headers:{
-            "Content-Type":"text/html; charset=UTF-8",
-            "Cache-Control":"no-store, no-cache, must-revalidate"
-          }
-        });
-      }
-
         /* ==========================================
            PROFESSIONAL CUSTOM 404 PAGE ROUTE
            ========================================== */
@@ -118,6 +106,15 @@ if (path === "/api/live-chat/admin-push/register") {
 
 if (path === "/api/live-chat/admin-push/notify") {
   return handleLiveChatAdminPushNotify(request, env);
+}
+
+/* Visitor device registration + Admin se usi visitor ko private push */
+if (path === "/api/live-chat/visitor-push/register") {
+  return handleLiveChatVisitorPushRegister(request, env);
+}
+
+if (path === "/api/live-chat/visitor-push/notify") {
+  return handleLiveChatVisitorPushNotify(request, env);
 }
 
 /* =========================================================
@@ -1311,6 +1308,29 @@ async function ensureLiveChatAdminPushTables(env) {
       created_at TEXT NOT NULL
     )
   `).run();
+
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS live_chat_visitor_push_tokens (
+      token TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_live_chat_visitor_tokens_chat
+    ON live_chat_visitor_push_tokens (chat_id, status, updated_at)
+  `).run();
+
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS live_chat_visitor_push_events (
+      event_id TEXT PRIMARY KEY,
+      chat_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `).run();
 }
 
 async function handleLiveChatAdminPushRegister(request, env) {
@@ -1447,6 +1467,95 @@ async function handleLiveChatAdminPushNotify(request, env) {
   `).run().catch(function(){});
 
   return jsonResponse({success:true,event:"live_chat_admin_push_sent",sent});
+}
+
+async function handleLiveChatVisitorPushRegister(request, env) {
+  if (request.method !== "POST") return methodNotAllowed("POST");
+  if (!env.DB) return databaseMissingResponse();
+
+  const uid = await verifyLiveChatFirebaseUser(request);
+  const body = await readJsonBody(request);
+  const chatId = cleanText(body.chat_id);
+  const token = cleanText(body.token);
+  if (!uid || uid !== chatId) {
+    return jsonResponse({success:false,error:"Chat authorization failed."}, 401);
+  }
+  if (!token || token.length < 50 || token.length > 4096) {
+    return jsonResponse({success:false,error:"Valid visitor FCM token required."}, 400);
+  }
+
+  await ensureLiveChatAdminPushTables(env);
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO live_chat_visitor_push_tokens
+      (token, chat_id, status, created_at, updated_at)
+    VALUES (?, ?, 'active', ?, ?)
+    ON CONFLICT(token) DO UPDATE SET
+      chat_id=excluded.chat_id, status='active', updated_at=excluded.updated_at
+  `).bind(token, chatId, now, now).run();
+
+  return jsonResponse({success:true,event:"live_chat_visitor_push_registered"});
+}
+
+async function sendLiveChatVisitorPush(env, token, details) {
+  const accessToken = await getFirebaseAccessToken(env);
+  const typeLabels = {text:"naya jawab",image:"nayi image",video:"nayi video",audio:"naya audio",pdf:"nayi PDF",document:"nayi file"};
+  const kind = typeLabels[details.content_type] || typeLabels.text;
+  const preview = String(details.preview || "").replace(/\s+/g," ").trim().slice(0,90);
+  const title = "Imdade Rohani Live Chat";
+  const body = preview || ("Admin ne " + kind + " bheja hai.");
+  const target = SITE_ORIGIN + "/?openLiveChat=1";
+  return fetch(
+    "https://fcm.googleapis.com/v1/projects/" + encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) + "/messages:send",
+    {
+      method:"POST",
+      headers:{Authorization:"Bearer " + accessToken,"Content-Type":"application/json"},
+      body:JSON.stringify({message:{token:String(token),data:{title,body,tag:"live-chat-user-"+String(details.chat_id),url:target,chat_id:String(details.chat_id),event_id:String(details.event_id),notification_type:"live_chat_visitor"},webpush:{headers:{Urgency:"high",TTL:"86400"},fcm_options:{link:target}}}})
+    }
+  );
+}
+
+async function handleLiveChatVisitorPushNotify(request, env) {
+  if (request.method !== "POST") return methodNotAllowed("POST");
+  if (!env.DB) return databaseMissingResponse();
+
+  const uid = await verifyLiveChatFirebaseUser(request);
+  if (uid !== LIVE_CHAT_ADMIN_UID) {
+    return jsonResponse({success:false,error:"Admin authorization required."}, 401);
+  }
+  const body = await readJsonBody(request);
+  const chatId = cleanText(body.chat_id);
+  const eventId = cleanText(body.event_id);
+  const contentType = cleanText(body.content_type).toLowerCase();
+  const preview = cleanText(body.preview);
+  if (!chatId || chatId.length > 160 || !/^[A-Za-z0-9_-]{8,160}$/.test(eventId)) {
+    return jsonResponse({success:false,error:"Valid chat and event ids required."}, 400);
+  }
+
+  await ensureLiveChatAdminPushTables(env);
+  const now = new Date().toISOString();
+  const insert = await env.DB.prepare(`
+    INSERT OR IGNORE INTO live_chat_visitor_push_events
+      (event_id, chat_id, created_at)
+    VALUES (?, ?, ?)
+  `).bind(eventId, chatId, now).run();
+  if (!insert.meta || Number(insert.meta.changes || 0) === 0) {
+    return jsonResponse({success:true,event:"duplicate_ignored"});
+  }
+
+  const tokenRows = await env.DB.prepare(`
+    SELECT token FROM live_chat_visitor_push_tokens
+    WHERE chat_id=? AND status='active'
+    ORDER BY updated_at DESC LIMIT 5
+  `).bind(chatId).all();
+  const tokens = tokenRows && tokenRows.results ? tokenRows.results : [];
+  if (!tokens.length) return jsonResponse({success:true,event:"visitor_notification_permission_not_registered",sent:0});
+
+  const details = {chat_id:chatId,event_id:eventId,content_type:/^(text|image|video|audio|pdf|document)$/.test(contentType)?contentType:"text",preview};
+  const results = await Promise.allSettled(tokens.map(row => sendLiveChatVisitorPush(env,row.token,details)));
+  const sent = results.filter(result => result.status === "fulfilled" && result.value && result.value.ok).length;
+  await env.DB.prepare(`DELETE FROM live_chat_visitor_push_events WHERE created_at < datetime('now','-7 days')`).run().catch(function(){});
+  return jsonResponse({success:true,event:"live_chat_visitor_push_sent",sent});
 }
 
 async function handlePushRegister(
@@ -9014,7 +9123,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v9-admin-route-recovery";
+const VERSION = "imdaderohani-pwa-v8-offline-posts";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -9196,29 +9305,6 @@ self.addEventListener(
         .then(() =>
           self.clients.claim()
         )
-        .then(async () => {
-          if (self.location.hostname !== "live-chat-admin.imdaderohani.in") return;
-          const adminPath = new URL(
-            "/p/live-chat-admin-panel.html?source=admin-pwa",
-            self.location.origin
-          ).href;
-          const openClients = await self.clients.matchAll({
-            type: "window",
-            includeUncontrolled: true
-          });
-          await Promise.allSettled(openClients.map(client => {
-            try {
-              const clientUrl = new URL(client.url);
-              if (
-                (clientUrl.pathname === "/" || clientUrl.pathname === "/home") &&
-                "navigate" in client
-              ) {
-                return client.navigate(adminPath);
-              }
-            } catch (_) {}
-            return Promise.resolve();
-          }));
-        })
     );
   }
 );
@@ -9238,21 +9324,6 @@ self.addEventListener(
 
     const requestUrl =
       new URL(request.url);
-
-    if (
-      request.mode === "navigate" &&
-      requestUrl.hostname === "live-chat-admin.imdaderohani.in" &&
-      (requestUrl.pathname === "/" || requestUrl.pathname === "/home")
-    ) {
-      event.respondWith(Response.redirect(
-        new URL(
-          "/p/live-chat-admin-panel.html?source=admin-pwa",
-          self.location.origin
-        ).href,
-        302
-      ));
-      return;
-    }
 
     if (
       requestUrl.pathname
@@ -9596,13 +9667,6 @@ self.addEventListener(
 
     let targetUrl =
       notificationData.url || "";
-
-    if (
-      notificationData.notification_type === "live_chat_admin" &&
-      self.location.hostname === "live-chat-admin.imdaderohani.in"
-    ) {
-      targetUrl = "/p/live-chat-admin-panel.html?source=admin-pwa";
-    }
 
     if (
       event.action === "open_link_2"
