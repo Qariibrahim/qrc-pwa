@@ -2024,7 +2024,7 @@ async function getFirebaseAccessToken(
       ),
 
     scope:
-      "https://www.googleapis.com/auth/firebase.messaging",
+      "https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/datastore",
 
     aud:
       "https://oauth2.googleapis.com/token",
