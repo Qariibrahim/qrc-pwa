@@ -1530,14 +1530,41 @@ async function sendLiveChatVisitorPush(env, token, details) {
   );
 }
 
+/* Background scheduler ke paas browser Firebase ID token nahi hota. Isliye
+   scheduled push ko Firestore ke asli admin message se verify kiya jata hai. */
+async function verifyScheduledLiveChatMessage(env, chatId, eventId) {
+  if (!env.FIREBASE_PROJECT_ID) return false;
+  try {
+    const accessToken = await getFirebaseAccessToken(env);
+    const documentUrl =
+      "https://firestore.googleapis.com/v1/projects/" +
+      encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
+      "/databases/(default)/documents/liveChats/" +
+      encodeURIComponent(String(chatId)) +
+      "/messages/" +
+      encodeURIComponent(String(eventId));
+    const response = await fetch(documentUrl, {
+      method:"GET",
+      headers:{Authorization:"Bearer " + accessToken}
+    });
+    if (!response.ok) return false;
+    const document = await response.json();
+    const fields = document && document.fields ? document.fields : {};
+    const sender = fields.sender && fields.sender.stringValue
+      ? String(fields.sender.stringValue) : "";
+    const text = fields.text && fields.text.stringValue
+      ? String(fields.text.stringValue) : "";
+    return sender === "admin" && text.length > 0 && text.length <= 20000;
+  } catch (error) {
+    console.warn("Scheduled live-chat verification failed:", error);
+    return false;
+  }
+}
+
 async function handleLiveChatVisitorPushNotify(request, env) {
   if (request.method !== "POST") return methodNotAllowed("POST");
   if (!env.DB) return databaseMissingResponse();
 
-  const uid = await verifyLiveChatFirebaseUser(request);
-  if (uid !== LIVE_CHAT_ADMIN_UID) {
-    return jsonResponse({success:false,error:"Admin authorization required."}, 401);
-  }
   const body = await readJsonBody(request);
   const chatId = cleanText(body.chat_id);
   const eventId = cleanText(body.event_id);
@@ -1545,6 +1572,18 @@ async function handleLiveChatVisitorPushNotify(request, env) {
   const preview = cleanText(body.preview);
   if (!chatId || chatId.length > 160 || !/^[A-Za-z0-9_-]{8,160}$/.test(eventId)) {
     return jsonResponse({success:false,error:"Valid chat and event ids required."}, 400);
+  }
+
+  if (body.scheduled === true) {
+    const verified = await verifyScheduledLiveChatMessage(env, chatId, eventId);
+    if (!verified) {
+      return jsonResponse({success:false,error:"Scheduled admin message verification failed."}, 401);
+    }
+  } else {
+    const uid = await verifyLiveChatFirebaseUser(request);
+    if (uid !== LIVE_CHAT_ADMIN_UID) {
+      return jsonResponse({success:false,error:"Admin authorization required."}, 401);
+    }
   }
 
   await ensureLiveChatAdminPushTables(env);
@@ -1848,7 +1887,8 @@ async function getFirebaseAccessToken(
       ),
 
     scope:
-      "https://www.googleapis.com/auth/firebase.messaging",
+      "https://www.googleapis.com/auth/firebase.messaging " +
+      "https://www.googleapis.com/auth/datastore",
 
     aud:
       "https://oauth2.googleapis.com/token",
