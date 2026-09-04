@@ -1510,9 +1510,9 @@ async function sendLiveChatVisitorPush(env, token, details) {
   const accessToken = await getFirebaseAccessToken(env);
   const typeLabels = {text:"naya jawab",image:"nayi image",video:"nayi video",audio:"naya audio",pdf:"nayi PDF",document:"nayi file"};
   const kind = typeLabels[details.content_type] || typeLabels.text;
-  const preview = String(details.preview || "").replace(/\s+/g," ").trim().slice(0,90);
+  const preview = String(details.preview || "").replace(/\badmin\b/gi,"khadim").replace(/\s+/g," ").trim().slice(0,90);
   const title = "Imdade Rohani Live Chat";
-  const body = preview || ("Admin ne " + kind + " bheja hai.");
+  const body = preview || ("Khadim ne " + kind + " bheja hai.");
   const target = SITE_ORIGIN + "/?openLiveChat=1";
   return fetch(
     "https://fcm.googleapis.com/v1/projects/" + encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) + "/messages:send",
