@@ -1527,47 +1527,73 @@ async function sendLiveChatVisitorPush(env, token, details) {
   );
 }
 
-/* Apps Script Scheduler ke paas admin browser ka Firebase ID token nahi hota.
-   Isliye scheduled request tabhi qabool hoti hai jab wahi event Firestore mein
-   waqai admin message ke taur par maujood ho. */
-async function verifyScheduledLiveChatAdminMessage(env, chatId, eventId) {
-  if (!env.FIREBASE_PROJECT_ID || !chatId || !eventId) return false;
-
+/* Scheduled push uses the caller's existing Firestore authorization.
+   Verify the protected schedule and its committed admin message before push. */
+async function verifyScheduledLiveChatAdminMessage(env, chatId, eventId, callerAuthorization) {
+  const fail = (status, error, stage, firestoreStatus) => ({
+    ok: false, status, error, stage,
+    ...(firestoreStatus ? { firestoreStatus } : {})
+  });
+  if (!env.FIREBASE_PROJECT_ID) {
+    return fail(500, "FIREBASE_PROJECT_ID missing.", "configuration");
+  }
+  const authorization = String(callerAuthorization || "").trim();
+  if (!/^Bearer\s+\S+$/i.test(authorization)) {
+    return fail(401, "Scheduled request Authorization missing.", "authorization");
+  }
+  const base = "https://firestore.googleapis.com/v1/projects/" +
+    encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
+    "/databases/(default)/documents";
+  const headers = { Authorization: authorization, "Content-Type": "application/json" };
+  let stage = "schedule-read";
   try {
-    const accessToken = await getFirebaseAccessToken(env);
-
-    const url =
-      "https://firestore.googleapis.com/v1/projects/" +
-      encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
-      "/databases/(default)/documents/liveChats/" +
-      encodeURIComponent(String(chatId)) +
-      "/messages/" +
-      encodeURIComponent(String(eventId));
-
-    const response = await fetch(url, {
-      headers: {
-        Authorization: "Bearer " + accessToken
-      }
+    // This query must succeed with the caller's permissions, never the Worker's.
+    const scheduleResponse = await fetch(base + ":runQuery", {
+      method: "POST", headers,
+      body: JSON.stringify({ structuredQuery: {
+        from: [{ collectionId: "liveChatScheduled" }],
+        where: { fieldFilter: {
+          field: { fieldPath: "messageId" },
+          op: "EQUAL", value: { stringValue: eventId }
+        } },
+        limit: 10
+      } })
     });
-
-    if (!response.ok) return false;
-
-    const document = await response.json();
-
-    return Boolean(
-      document &&
-      document.fields &&
-      document.fields.sender &&
-      document.fields.sender.stringValue === "admin"
-    );
-
-  } catch (error) {
-    console.error(
-      "Scheduled message verification failed",
-      error
-    );
-
-    return false;
+    if (!scheduleResponse.ok) {
+      const code = scheduleResponse.status;
+      return fail(code === 401 || code === 403 ? code : 502,
+        "Scheduled Firestore read failed (HTTP " + code + ").", stage, code);
+    }
+    const rows = await scheduleResponse.json();
+    const field = (fields, key) => String(fields[key]?.stringValue || "");
+    const schedule = Array.isArray(rows) && rows.map(row => row.document?.fields)
+      .find(fields => fields && field(fields, "chatId") === chatId &&
+        field(fields, "messageId") === eventId &&
+        field(fields, "status") === "push_pending" &&
+        Date.parse(fields.scheduledAt?.timestampValue || "") <= Date.now());
+    if (!schedule) {
+      return fail(409, "Matching due push_pending schedule not found.", "schedule-match");
+    }
+    stage = "message-read";
+    const messageResponse = await fetch(base + "/liveChats/" +
+      encodeURIComponent(chatId) + "/messages/" + encodeURIComponent(eventId),
+      { method: "GET", headers });
+    if (!messageResponse.ok) {
+      const code = messageResponse.status;
+      return fail(code === 401 || code === 403 || code === 404 ? code : 502,
+        "Scheduled message read failed (HTTP " + code + ").", stage, code);
+    }
+    const document = await messageResponse.json();
+    const fields = document?.fields || {};
+    const text = field(fields, "text");
+    if (field(fields, "sender") !== "admin" || !text || text.length > 20000 ||
+        text !== field(schedule, "text")) {
+      return fail(409, "Scheduled admin message does not match.", "message-match");
+    }
+    return { ok: true, preview: field(schedule, "preview").slice(0, 120) };
+  } catch (_) {
+    // Never log credentials or forward upstream response bodies.
+    return fail(503, "Scheduled verification temporarily unavailable.", stage);
   }
 }
 
@@ -1579,9 +1605,6 @@ async function handleLiveChatVisitorPushNotify(request, env) {
   if (!env.DB) {
     return databaseMissingResponse();
   }
-
-  const uid =
-    await verifyLiveChatFirebaseUser(request);
 
   const body =
     await readJsonBody(request);
@@ -1595,7 +1618,7 @@ async function handleLiveChatVisitorPushNotify(request, env) {
   const contentType =
     cleanText(body.content_type).toLowerCase();
 
-  const preview =
+  let preview =
     cleanText(body.preview);
 
   if (
@@ -1612,29 +1635,23 @@ async function handleLiveChatVisitorPushNotify(request, env) {
     );
   }
 
-  let authorized =
-    uid === LIVE_CHAT_ADMIN_UID;
-
-  if (
-    !authorized &&
-    body.scheduled === true
-  ) {
-    authorized =
-      await verifyScheduledLiveChatAdminMessage(
-        env,
-        chatId,
-        eventId
-      );
-  }
-
-  if (!authorized) {
-    return jsonResponse(
-      {
-        success: false,
-        error: "Admin authorization required."
-      },
-      401
+  if (body.scheduled === true) {
+    const verified = await verifyScheduledLiveChatAdminMessage(
+      env, chatId, eventId, request.headers.get("Authorization")
     );
+    if (!verified.ok) {
+      return jsonResponse({
+        success: false, error: verified.error, stage: verified.stage,
+        firestoreStatus: verified.firestoreStatus,
+        fixVersion: "scheduled-auth-20260911"
+      }, verified.status);
+    }
+    preview = verified.preview;
+  } else {
+    const uid = await verifyLiveChatFirebaseUser(request);
+    if (uid !== LIVE_CHAT_ADMIN_UID) {
+      return jsonResponse({ success: false, error: "Admin authorization required." }, 401);
+    }
   }
 
   await ensureLiveChatAdminPushTables(env);

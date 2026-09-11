@@ -1382,10 +1382,7 @@ async function sendLiveChatAdminPush(env, token, details) {
   };
   const name = String(details.name || "User").slice(0, 45);
   const kind = typeLabels[details.content_type] || typeLabels.text;
-  const preview = String(details.preview || "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 120);
+  const preview = String(details.preview || "").replace(/\s+/g, " ").trim().slice(0, 120);
   const title = "Live Chat: " + name;
   const body = preview || (name + " ne " + kind + " bheja hai.");
   const target = LIVE_CHAT_ADMIN_ORIGIN +
@@ -1516,9 +1513,9 @@ async function sendLiveChatVisitorPush(env, token, details) {
   const accessToken = await getFirebaseAccessToken(env);
   const typeLabels = {text:"naya jawab",image:"nayi image",video:"nayi video",audio:"naya audio",pdf:"nayi PDF",document:"nayi file"};
   const kind = typeLabels[details.content_type] || typeLabels.text;
-  const preview = String(details.preview || "").replace(/\s+/g," ").trim().slice(0,90);
+  const preview = String(details.preview || "").replace(/\badmin\b/gi,"khadim").replace(/\s+/g," ").trim().slice(0,90);
   const title = "Imdade Rohani Live Chat";
-  const body = preview || ("Admin ne " + kind + " bheja hai.");
+  const body = preview || ("Khadim ne " + kind + " bheja hai.");
   const target = SITE_ORIGIN + "/?openLiveChat=1";
   return fetch(
     "https://fcm.googleapis.com/v1/projects/" + encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) + "/messages:send",
@@ -1530,97 +1527,246 @@ async function sendLiveChatVisitorPush(env, token, details) {
   );
 }
 
-/* Background scheduler ke paas browser Firebase ID token nahi hota. Isliye
-   scheduled push ko Firestore ke asli admin message se verify kiya jata hai. */
-async function verifyScheduledLiveChatMessage(env, chatId, eventId, callerAuthorization) {
-  if (!env.FIREBASE_PROJECT_ID) return false;
+/* Scheduled push uses the caller's existing Firestore authorization.
+   Verify the protected schedule and its committed admin message before push. */
+async function verifyScheduledLiveChatAdminMessage(env, chatId, eventId, callerAuthorization) {
+  const fail = (status, error, stage, firestoreStatus) => ({
+    ok: false, status, error, stage,
+    ...(firestoreStatus ? { firestoreStatus } : {})
+  });
+  if (!env.FIREBASE_PROJECT_ID) {
+    return fail(500, "FIREBASE_PROJECT_ID missing.", "configuration");
+  }
+  const authorization = String(callerAuthorization || "").trim();
+  if (!/^Bearer\s+\S+$/i.test(authorization)) {
+    return fail(401, "Scheduled request Authorization missing.", "authorization");
+  }
+  const base = "https://firestore.googleapis.com/v1/projects/" +
+    encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
+    "/databases/(default)/documents";
+  const headers = { Authorization: authorization, "Content-Type": "application/json" };
+  let stage = "schedule-read";
   try {
-    /* Apps Script ka wahi authorized OAuth token pehle istemal karein jis se
-       scheduled message Firestore mein commit hua tha. Purane callers ke liye
-       Worker service-account token fallback bhi maujood rahega. */
-    const suppliedAuthorization = String(callerAuthorization || "").trim();
-    const authorization = /^Bearer\s+\S+/i.test(suppliedAuthorization)
-      ? suppliedAuthorization
-      : "Bearer " + await getFirebaseAccessToken(env);
-    const documentUrl =
-      "https://firestore.googleapis.com/v1/projects/" +
-      encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
-      "/databases/(default)/documents/liveChats/" +
-      encodeURIComponent(String(chatId)) +
-      "/messages/" +
-      encodeURIComponent(String(eventId));
-    const response = await fetch(documentUrl, {
-      method:"GET",
-      headers:{Authorization:authorization}
+    // This query must succeed with the caller's permissions, never the Worker's.
+    const scheduleResponse = await fetch(base + ":runQuery", {
+      method: "POST", headers,
+      body: JSON.stringify({ structuredQuery: {
+        from: [{ collectionId: "liveChatScheduled" }],
+        where: { fieldFilter: {
+          field: { fieldPath: "messageId" },
+          op: "EQUAL", value: { stringValue: eventId }
+        } },
+        limit: 10
+      } })
     });
-    if (!response.ok) return false;
-    const document = await response.json();
-    const fields = document && document.fields ? document.fields : {};
-    const sender = fields.sender && fields.sender.stringValue
-      ? String(fields.sender.stringValue) : "";
-    const text = fields.text && fields.text.stringValue
-      ? String(fields.text.stringValue) : "";
-    return sender === "admin" && text.length > 0 && text.length <= 20000;
-  } catch (error) {
-    console.warn("Scheduled live-chat verification failed:", error);
-    return false;
+    if (!scheduleResponse.ok) {
+      const code = scheduleResponse.status;
+      return fail(code === 401 || code === 403 ? code : 502,
+        "Scheduled Firestore read failed (HTTP " + code + ").", stage, code);
+    }
+    const rows = await scheduleResponse.json();
+    const field = (fields, key) => String(fields[key]?.stringValue || "");
+    const schedule = Array.isArray(rows) && rows.map(row => row.document?.fields)
+      .find(fields => fields && field(fields, "chatId") === chatId &&
+        field(fields, "messageId") === eventId &&
+        field(fields, "status") === "push_pending" &&
+        Date.parse(fields.scheduledAt?.timestampValue || "") <= Date.now());
+    if (!schedule) {
+      return fail(409, "Matching due push_pending schedule not found.", "schedule-match");
+    }
+    stage = "message-read";
+    const messageResponse = await fetch(base + "/liveChats/" +
+      encodeURIComponent(chatId) + "/messages/" + encodeURIComponent(eventId),
+      { method: "GET", headers });
+    if (!messageResponse.ok) {
+      const code = messageResponse.status;
+      return fail(code === 401 || code === 403 || code === 404 ? code : 502,
+        "Scheduled message read failed (HTTP " + code + ").", stage, code);
+    }
+    const document = await messageResponse.json();
+    const fields = document?.fields || {};
+    const text = field(fields, "text");
+    if (field(fields, "sender") !== "admin" || !text || text.length > 20000 ||
+        text !== field(schedule, "text")) {
+      return fail(409, "Scheduled admin message does not match.", "message-match");
+    }
+    return { ok: true, preview: field(schedule, "preview").slice(0, 120) };
+  } catch (_) {
+    // Never log credentials or forward upstream response bodies.
+    return fail(503, "Scheduled verification temporarily unavailable.", stage);
   }
 }
 
 async function handleLiveChatVisitorPushNotify(request, env) {
-  if (request.method !== "POST") return methodNotAllowed("POST");
-  if (!env.DB) return databaseMissingResponse();
+  if (request.method !== "POST") {
+    return methodNotAllowed("POST");
+  }
 
-  const body = await readJsonBody(request);
-  const chatId = cleanText(body.chat_id);
-  const eventId = cleanText(body.event_id);
-  const contentType = cleanText(body.content_type).toLowerCase();
-  const preview = cleanText(body.preview);
-  if (!chatId || chatId.length > 160 || !/^[A-Za-z0-9_-]{8,160}$/.test(eventId)) {
-    return jsonResponse({success:false,error:"Valid chat and event ids required."}, 400);
+  if (!env.DB) {
+    return databaseMissingResponse();
+  }
+
+  const body =
+    await readJsonBody(request);
+
+  const chatId =
+    cleanText(body.chat_id);
+
+  const eventId =
+    cleanText(body.event_id);
+
+  const contentType =
+    cleanText(body.content_type).toLowerCase();
+
+  let preview =
+    cleanText(body.preview);
+
+  if (
+    !chatId ||
+    chatId.length > 160 ||
+    !/^[A-Za-z0-9_-]{8,160}$/.test(eventId)
+  ) {
+    return jsonResponse(
+      {
+        success: false,
+        error: "Valid chat and event ids required."
+      },
+      400
+    );
   }
 
   if (body.scheduled === true) {
-    const verified = await verifyScheduledLiveChatMessage(
-      env,
-      chatId,
-      eventId,
-      request.headers.get("Authorization")
+    const verified = await verifyScheduledLiveChatAdminMessage(
+      env, chatId, eventId, request.headers.get("Authorization")
     );
-    if (!verified) {
-      return jsonResponse({success:false,error:"Scheduled admin message verification failed."}, 401);
+    if (!verified.ok) {
+      return jsonResponse({
+        success: false, error: verified.error, stage: verified.stage,
+        firestoreStatus: verified.firestoreStatus,
+        fixVersion: "scheduled-auth-20260911"
+      }, verified.status);
     }
+    preview = verified.preview;
   } else {
     const uid = await verifyLiveChatFirebaseUser(request);
     if (uid !== LIVE_CHAT_ADMIN_UID) {
-      return jsonResponse({success:false,error:"Admin authorization required."}, 401);
+      return jsonResponse({ success: false, error: "Admin authorization required." }, 401);
     }
   }
 
   await ensureLiveChatAdminPushTables(env);
-  const now = new Date().toISOString();
+
+  const now =
+    new Date().toISOString();
+
   const insert = await env.DB.prepare(`
     INSERT OR IGNORE INTO live_chat_visitor_push_events
       (event_id, chat_id, created_at)
     VALUES (?, ?, ?)
-  `).bind(eventId, chatId, now).run();
-  if (!insert.meta || Number(insert.meta.changes || 0) === 0) {
-    return jsonResponse({success:true,event:"duplicate_ignored"});
+  `).bind(
+    eventId,
+    chatId,
+    now
+  ).run();
+
+  if (
+    !insert.meta ||
+    Number(insert.meta.changes || 0) === 0
+  ) {
+    return jsonResponse({
+      success: true,
+      event: "duplicate_ignored"
+    });
   }
 
   const tokenRows = await env.DB.prepare(`
-    SELECT token FROM live_chat_visitor_push_tokens
-    WHERE chat_id=? AND status='active'
-    ORDER BY updated_at DESC LIMIT 5
+    SELECT token
+    FROM live_chat_visitor_push_tokens
+    WHERE chat_id=?
+      AND status='active'
+    ORDER BY updated_at DESC
+    LIMIT 5
   `).bind(chatId).all();
-  const tokens = tokenRows && tokenRows.results ? tokenRows.results : [];
-  if (!tokens.length) return jsonResponse({success:true,event:"visitor_notification_permission_not_registered",sent:0});
 
-  const details = {chat_id:chatId,event_id:eventId,content_type:/^(text|image|video|audio|pdf|document)$/.test(contentType)?contentType:"text",preview};
-  const results = await Promise.allSettled(tokens.map(row => sendLiveChatVisitorPush(env,row.token,details)));
-  const sent = results.filter(result => result.status === "fulfilled" && result.value && result.value.ok).length;
-  await env.DB.prepare(`DELETE FROM live_chat_visitor_push_events WHERE created_at < datetime('now','-7 days')`).run().catch(function(){});
-  return jsonResponse({success:true,event:"live_chat_visitor_push_sent",sent});
+  const tokens =
+    tokenRows && tokenRows.results
+      ? tokenRows.results
+      : [];
+
+  if (!tokens.length) {
+    return jsonResponse({
+      success: true,
+      event:
+        "visitor_notification_permission_not_registered",
+      sent: 0
+    });
+  }
+
+  const details = {
+    chat_id: chatId,
+    event_id: eventId,
+    content_type:
+      /^(text|image|video|audio|pdf|document)$/.test(
+        contentType
+      )
+        ? contentType
+        : "text",
+    preview: preview
+  };
+
+  const results = await Promise.allSettled(
+    tokens.map(function (row) {
+      return sendLiveChatVisitorPush(
+        env,
+        row.token,
+        details
+      );
+    })
+  );
+
+  const sent = results.filter(function (result) {
+    return (
+      result.status === "fulfilled" &&
+      result.value &&
+      result.value.ok
+    );
+  }).length;
+
+  /*
+   * Temporary push failure aaye to event unlock rahega.
+   * Scheduler agle minute notification dobara try karega.
+   * Chat message duplicate nahi hoga.
+   */
+  if (tokens.length && sent === 0) {
+    await env.DB.prepare(`
+      DELETE FROM live_chat_visitor_push_events
+      WHERE event_id=? AND chat_id=?
+    `).bind(
+      eventId,
+      chatId
+    ).run().catch(function () {});
+
+    return jsonResponse(
+      {
+        success: false,
+        error:
+          "Visitor push temporarily failed; retry allowed.",
+        sent: 0
+      },
+      503
+    );
+  }
+
+  await env.DB.prepare(`
+    DELETE FROM live_chat_visitor_push_events
+    WHERE created_at < datetime('now','-7 days')
+  `).run().catch(function () {});
+
+  return jsonResponse({
+    success: true,
+    event: "live_chat_visitor_push_sent",
+    sent: sent
+  });
 }
 
 async function handlePushRegister(
@@ -1898,8 +2044,7 @@ async function getFirebaseAccessToken(
       ),
 
     scope:
-      "https://www.googleapis.com/auth/firebase.messaging " +
-      "https://www.googleapis.com/auth/datastore",
+      "https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/datastore",
 
     aud:
       "https://oauth2.googleapis.com/token",
