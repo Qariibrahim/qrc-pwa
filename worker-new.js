@@ -1532,10 +1532,16 @@ async function sendLiveChatVisitorPush(env, token, details) {
 
 /* Background scheduler ke paas browser Firebase ID token nahi hota. Isliye
    scheduled push ko Firestore ke asli admin message se verify kiya jata hai. */
-async function verifyScheduledLiveChatMessage(env, chatId, eventId) {
+async function verifyScheduledLiveChatMessage(env, chatId, eventId, callerAuthorization) {
   if (!env.FIREBASE_PROJECT_ID) return false;
   try {
-    const accessToken = await getFirebaseAccessToken(env);
+    /* Apps Script ka wahi authorized OAuth token pehle istemal karein jis se
+       scheduled message Firestore mein commit hua tha. Purane callers ke liye
+       Worker service-account token fallback bhi maujood rahega. */
+    const suppliedAuthorization = String(callerAuthorization || "").trim();
+    const authorization = /^Bearer\s+\S+/i.test(suppliedAuthorization)
+      ? suppliedAuthorization
+      : "Bearer " + await getFirebaseAccessToken(env);
     const documentUrl =
       "https://firestore.googleapis.com/v1/projects/" +
       encodeURIComponent(String(env.FIREBASE_PROJECT_ID)) +
@@ -1545,7 +1551,7 @@ async function verifyScheduledLiveChatMessage(env, chatId, eventId) {
       encodeURIComponent(String(eventId));
     const response = await fetch(documentUrl, {
       method:"GET",
-      headers:{Authorization:"Bearer " + accessToken}
+      headers:{Authorization:authorization}
     });
     if (!response.ok) return false;
     const document = await response.json();
@@ -1575,7 +1581,12 @@ async function handleLiveChatVisitorPushNotify(request, env) {
   }
 
   if (body.scheduled === true) {
-    const verified = await verifyScheduledLiveChatMessage(env, chatId, eventId);
+    const verified = await verifyScheduledLiveChatMessage(
+      env,
+      chatId,
+      eventId,
+      request.headers.get("Authorization")
+    );
     if (!verified) {
       return jsonResponse({success:false,error:"Scheduled admin message verification failed."}, 401);
     }
