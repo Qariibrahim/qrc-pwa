@@ -9334,7 +9334,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v10-admin-route-v22";
+const VERSION = "imdaderohani-pwa-v10-admin-offline-v23";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -9344,6 +9344,54 @@ const STATIC_CACHE =
 
 const OFFLINE_URL =
   "/offline.html";
+
+/* Admin shell and pinned Firebase SDKs; never cache auth tokens or API responses. */
+const ADMIN_SHELL_PATH = '/p/live-chat-admin-panel.html';
+const ADMIN_SHELL_CACHE = 'irca-offline-shell-v1';
+const ADMIN_SDK_URLS = ['app','auth','firestore'].map(name =>
+  'https://www.gstatic.com/firebasejs/12.12.1/firebase-' + name + '-compat.js');
+
+async function saveAdminShell(response) {
+  if (!response || !response.ok || !(response.headers.get('content-type') || '').includes('text/html')) return false;
+  const html = await response.clone().text();
+  if (!html.includes('irLiveChatAdminApp') || !html.includes('irca-readonly-offline-v1')) return false;
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  await cache.put(ADMIN_SHELL_PATH, response.clone());
+  return true;
+}
+async function adminOfflineSdk(request) {
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  const saved = await cache.match(request.url || request);
+  if (saved) return saved;
+  const response = await fetch(request.url || request, {mode:'cors', credentials:'omit'});
+  if (response.ok) await cache.put(request.url || request, response.clone());
+  return response;
+}
+async function cacheAdminOfflineShell() {
+  await Promise.allSettled([
+    fetch(ADMIN_SHELL_PATH, {cache:'reload',credentials:'same-origin'}).then(saveAdminShell),
+    ...ADMIN_SDK_URLS.map(url => adminOfflineSdk(url))
+  ]);
+}
+async function adminOfflineNavigation(request, event) {
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(request, {signal:controller.signal});
+    if (response.ok) {
+      event.waitUntil(saveAdminShell(response.clone()).catch(() => false));
+      return response;
+    }
+    const saved = await cache.match(ADMIN_SHELL_PATH);
+    return saved || response;
+  } catch (_) {
+    const saved = await cache.match(ADMIN_SHELL_PATH);
+    return saved || (await caches.match('/offline.html')) || new Response(
+      '<!doctype html><meta name="viewport" content="width=device-width"><p>Admin app ko pehli baar internet par kholein, phir offline istemal karein.</p>',
+      {status:503,headers:{'Content-Type':'text/html; charset=UTF-8'}});
+  } finally { clearTimeout(timer); }
+}
 
 /*
   Ye tamam aham Blogger pages app install/update hote hi cache honge.
@@ -9391,6 +9439,7 @@ const OFFLINE_ROUTE_ALIASES = {
 };
 
 async function cacheOfflinePages() {
+  if (self.location.hostname === "live-chat-admin.imdaderohani.in") return cacheAdminOfflineShell();
   const cache = await caches.open(PAGE_CACHE);
 
   const discoveredPosts = new Set();
@@ -9483,6 +9532,7 @@ self.addEventListener(
         .then(() =>
           cacheOfflinePages()
         )
+        .then(() => cacheAdminOfflineShell())
         .then(() =>
           self.skipWaiting()
         )
@@ -9504,7 +9554,8 @@ self.addEventListener(
                 key =>
                   ![
                     PAGE_CACHE,
-                    STATIC_CACHE
+                    STATIC_CACHE,
+                    ADMIN_SHELL_CACHE
                   ].includes(key)
               )
               .map(
@@ -9557,6 +9608,14 @@ self.addEventListener(
       return;
     }
 
+    if (requestUrl.origin === self.location.origin && requestUrl.pathname === ADMIN_SHELL_PATH) {
+      event.respondWith(adminOfflineNavigation(request, event));
+      return;
+    }
+    if (ADMIN_SDK_URLS.includes(requestUrl.href)) {
+      event.respondWith(adminOfflineSdk(request));
+      return;
+    }
     if (
       requestUrl.pathname
         .startsWith("/api/")
@@ -9697,6 +9756,15 @@ self.addEventListener(
       return;
     }
 
+    if (event.data.type === "IRCA_PREPARE_OFFLINE") {
+      event.waitUntil((async () => {
+        if (!event.source || !event.source.url) return;
+        const source = new URL(event.source.url);
+        if (source.origin !== self.location.origin || source.pathname !== ADMIN_SHELL_PATH) return;
+        await cacheAdminOfflineShell();
+      })());
+      return;
+    }
     if (
       event.data.type ===
       "PWA_UPDATE_VERSION"
