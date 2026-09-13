@@ -9334,7 +9334,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v10-admin-offline-v23";
+const VERSION = "imdaderohani-pwa-v10-admin-offline-v24";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -9349,7 +9349,10 @@ const OFFLINE_URL =
 const ADMIN_SHELL_PATH = '/p/live-chat-admin-panel.html';
 const ADMIN_SHELL_CACHE = 'irca-offline-shell-v1';
 const ADMIN_SDK_URLS = ['app','auth','firestore'].map(name =>
-  'https://www.gstatic.com/firebasejs/12.12.1/firebase-' + name + '-compat.js');
+  'https://www.gstatic.com/firebasejs/12.12.1/firebase-' + name + '-compat.js').concat([
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+]);
 
 async function saveAdminShell(response) {
   if (!response || !response.ok || !(response.headers.get('content-type') || '').includes('text/html')) return false;
@@ -9372,6 +9375,11 @@ async function cacheAdminOfflineShell() {
     fetch(ADMIN_SHELL_PATH, {cache:'reload',credentials:'same-origin'}).then(saveAdminShell),
     ...ADMIN_SDK_URLS.map(url => adminOfflineSdk(url))
   ]);
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  const shell = await cache.match(ADMIN_SHELL_PATH);
+  const shellReady = shell && (await shell.clone().text()).includes('irca-offline-vault-v1');
+  const files = await Promise.all(ADMIN_SDK_URLS.map(url => cache.match(url)));
+  return {ready: !!shellReady && files.every(Boolean)};
 }
 async function adminOfflineNavigation(request, event) {
   const cache = await caches.open(ADMIN_SHELL_CACHE);
@@ -9761,7 +9769,8 @@ self.addEventListener(
         if (!event.source || !event.source.url) return;
         const source = new URL(event.source.url);
         if (source.origin !== self.location.origin || source.pathname !== ADMIN_SHELL_PATH) return;
-        await cacheAdminOfflineShell();
+        const result = await cacheAdminOfflineShell();
+        if (event.ports && event.ports[0]) event.ports[0].postMessage(result);
       })());
       return;
     }
