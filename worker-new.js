@@ -9801,6 +9801,25 @@ if (
 );
 
 
+// v27 visitor readiness. Cache only public same-origin HTML and pinned SDK files.
+async function handleVisitorOfflineMessage(event) {
+  var port=event.ports&&event.ports[0];if(!port)return;
+  try {
+    var source=event.source&&event.source.url?new URL(event.source.url):null;
+    if(!source||source.origin!==self.location.origin||source.pathname.indexOf('/api/')===0)throw new Error('WRONG_VISITOR_PAGE');
+    var ready=await adminDeadline((async function(){
+      var page=await adminDownload(source.href,{cache:'no-store',credentials:'omit'},async function(response){var body=await response.arrayBuffer();return new Response(body,{status:response.status,headers:response.headers});});
+      if(!page.ok)throw new Error('PAGE_DOWNLOAD_FAILED');
+      var html=await page.clone().text();
+      if(html.indexOf('liveChatButton')<0||html.indexOf('ircv-offline-v27')<0)throw new Error('Updated theme abhi live nahi mili.');
+      await (await caches.open(PAGE_CACHE)).put(source.href,page);
+      await Promise.all(ADMIN_SDK_URLS.map(function(url){return adminOfflineSdk(new Request(url,{mode:'cors',credentials:'omit'}));}));
+      return true;
+    })(),20000,'Offline page ki tayari ka waqt khatam hua.');
+    port.postMessage({ok:ready===true,visitorProtocol:1});
+  }catch(error){port.postMessage({ok:false,visitorProtocol:1,error:error.message||'Offline page save nahi hui.'});}
+}
+
 self.addEventListener(
   "message",
   event => {
@@ -9810,6 +9829,9 @@ self.addEventListener(
       return;
     }
 
+    if(event.data.type === 'IRCV_PREPARE_OFFLINE') {
+      event.waitUntil(handleVisitorOfflineMessage(event));return;
+    }
     if (event.data.type === "IRCA_PREPARE_OFFLINE" || event.data.type === "IRCA_OFFLINE_PING") {
       event.waitUntil(handleAdminOfflineMessage(event));
       return;
