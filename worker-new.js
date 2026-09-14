@@ -9334,7 +9334,7 @@ function formatInactiveUsersList(
 
 function serviceWorkerCode() {
   return `
-const VERSION = "imdaderohani-pwa-v10-admin-route-v22";
+const VERSION = "imdaderohani-pwa-v10-admin-offline-v25";
 
 const PAGE_CACHE =
   VERSION + "-pages";
@@ -9344,6 +9344,130 @@ const STATIC_CACHE =
 
 const OFFLINE_URL =
   "/offline.html";
+
+/* Admin shell and pinned Firebase SDKs; never cache auth tokens or API responses. */
+const ADMIN_SHELL_PATH = '/p/live-chat-admin-panel.html';
+const ADMIN_SHELL_CACHE = 'irca-offline-shell-v1';
+const ADMIN_SDK_URLS = ['app','auth','firestore'].map(name =>
+  'https://www.gstatic.com/firebasejs/12.12.1/firebase-' + name + '-compat.js').concat([
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+]);
+const ADMIN_OFFLINE_PROTOCOL = 2;
+const ADMIN_DOWNLOAD_MS = 12000;
+const ADMIN_PREPARE_MS = 20000;
+let adminPreparation = null;
+
+function adminDeadline(promise, milliseconds, label, cancel) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (cancel) try { cancel(); } catch (_) {}
+      const error = new Error(label + ': waqt par jawab nahi mila');
+      error.code = 'OFFLINE_TIMEOUT'; reject(error);
+    }, milliseconds);
+    Promise.resolve(promise).then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+  });
+}
+async function adminDownload(url, options, consume) {
+  const controller = new AbortController();
+  return adminDeadline((async () => {
+    const response = await fetch(url, Object.assign({}, options, {signal:controller.signal}));
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    return consume(response);
+  })(), ADMIN_DOWNLOAD_MS, new URL(url,self.location.origin).pathname.split('/').pop(), () => controller.abort());
+}
+async function adminShellReady(response) {
+  if (!response || !response.ok || !(response.headers.get('content-type') || '').includes('text/html')) return false;
+  const html = await response.clone().text();
+  return html.includes('irLiveChatAdminApp') && html.includes('irca-offline-vault-v1');
+}
+
+async function saveAdminShell(response) {
+  if (!response || !response.ok || !(response.headers.get('content-type') || '').includes('text/html')) return false;
+  const html = await response.clone().text();
+  if (!html.includes('irLiveChatAdminApp') || !html.includes('irca-readonly-offline-v1')) return false;
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  await cache.put(ADMIN_SHELL_PATH, response.clone());
+  return true;
+}
+async function adminOfflineSdk(request) {
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  const saved = await cache.match(request.url || request);
+  if (saved && saved.ok) return saved;
+  return adminDownload(request.url || request, {mode:'cors',credentials:'omit'}, async response => {
+    await cache.put(request.url || request,response.clone());
+    return response;
+  });
+}
+async function prepareAdminShell(forceRefresh) {
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  const previous = await cache.match(ADMIN_SHELL_PATH);
+  if (!forceRefresh && await adminShellReady(previous)) return;
+  try {
+    await adminDownload(ADMIN_SHELL_PATH, {cache:'reload',credentials:'same-origin'}, async response => {
+      if (!await adminShellReady(response)) throw new Error('Updated Admin theme nahi mili');
+      await cache.put(ADMIN_SHELL_PATH,response.clone());
+    });
+  } catch (error) {
+    if (!await adminShellReady(previous)) throw error;
+  }
+}
+function cacheAdminOfflineShell(forceRefresh) {
+  if (adminPreparation) return adminPreparation;
+  adminPreparation = runAdminOfflinePreparation(forceRefresh).finally(() => { adminPreparation=null; });
+  return adminPreparation;
+}
+async function runAdminOfflinePreparation(forceRefresh) {
+  const tasks = [{name:'Admin page',run:() => prepareAdminShell(forceRefresh)}].concat(
+    ADMIN_SDK_URLS.map(url => ({name:new URL(url).pathname.split('/').pop(),run:() => adminOfflineSdk(url)}))
+  );
+  const files = await Promise.all(tasks.map(async task => {
+    try { await adminDeadline(Promise.resolve().then(task.run),16000,task.name); return {name:task.name,ok:true}; }
+    catch (error) { return {name:task.name,ok:false,error:(error.name === 'QuotaExceededError' ? 'Device storage bhar gayi' : error.message || String(error))}; }
+  }));
+  const failed = files.filter(file => !file.ok);
+  return {protocol:ADMIN_OFFLINE_PROTOCOL,version:VERSION,ready:failed.length===0,files,
+    code:failed.length?'OFFLINE_FILES_UNAVAILABLE':'READY',
+    error:failed.map(file => file.name + ': ' + file.error).join('\\n')};
+}
+function adminMessageSourceAllowed(event) {
+  try { const source = new URL(event.source.url); return source.origin===self.location.origin && source.pathname===ADMIN_SHELL_PATH; }
+  catch (_) { return false; }
+}
+async function handleAdminOfflineMessage(event) {
+  let result;
+  try {
+    if (!adminMessageSourceAllowed(event)) {
+      result={protocol:ADMIN_OFFLINE_PROTOCOL,version:VERSION,ready:false,code:'WRONG_ADMIN_PAGE',error:'Offline save ke liye asli Live Chat Admin page kholein.'};
+    } else if (event.data.type==='IRCA_OFFLINE_PING') {
+      result={protocol:ADMIN_OFFLINE_PROTOCOL,version:VERSION,ready:false,code:'WORKER_READY'};
+    } else {
+      result=await adminDeadline(cacheAdminOfflineShell(false),ADMIN_PREPARE_MS,'Offline files ki tayari');
+    }
+  } catch (error) {
+    result={protocol:ADMIN_OFFLINE_PROTOCOL,version:VERSION,ready:false,code:'OFFLINE_PREPARE_FAILED',error:error.message||String(error)};
+  }
+  if (event.ports && event.ports[0]) try { event.ports[0].postMessage(result); } catch (_) {}
+}
+async function adminOfflineNavigation(request, event) {
+  const cache = await caches.open(ADMIN_SHELL_CACHE);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const response = await fetch(request, {signal:controller.signal});
+    if (response.ok) {
+      event.waitUntil(saveAdminShell(response.clone()).catch(() => false));
+      return response;
+    }
+    const saved = await cache.match(ADMIN_SHELL_PATH);
+    return saved || response;
+  } catch (_) {
+    const saved = await cache.match(ADMIN_SHELL_PATH);
+    return saved || (await caches.match('/offline.html')) || new Response(
+      '<!doctype html><meta name="viewport" content="width=device-width"><p>Admin app ko pehli baar internet par kholein, phir offline istemal karein.</p>',
+      {status:503,headers:{'Content-Type':'text/html; charset=UTF-8'}});
+  } finally { clearTimeout(timer); }
+}
 
 /*
   Ye tamam aham Blogger pages app install/update hote hi cache honge.
@@ -9391,6 +9515,7 @@ const OFFLINE_ROUTE_ALIASES = {
 };
 
 async function cacheOfflinePages() {
+  if (self.location.hostname === "live-chat-admin.imdaderohani.in") return cacheAdminOfflineShell();
   const cache = await caches.open(PAGE_CACHE);
 
   const discoveredPosts = new Set();
@@ -9460,36 +9585,15 @@ async function cacheOfflinePages() {
   );
 }
 
-self.addEventListener(
-  "install",
-  event => {
-    event.waitUntil(
-      caches
-        .open(STATIC_CACHE)
-        .then(cache =>
-          Promise.allSettled([
-            cache.add(OFFLINE_URL),
-            cache.add(
-              "/manifest.webmanifest"
-            ),
-            cache.add(
-              "/pwa-icon-192.png"
-            ),
-            cache.add(
-              "/pwa-icon-512.png"
-            )
-          ])
-        )
-        .then(() =>
-          cacheOfflinePages()
-        )
-        .then(() =>
-          self.skipWaiting()
-        )
-    );
-  }
-);
-
+self.addEventListener("install", event => {
+  const warmPages = caches.open(STATIC_CACHE).then(cache => Promise.allSettled([
+    cache.add(OFFLINE_URL), cache.add("/manifest.webmanifest"),
+    cache.add("/pwa-icon-192.png"), cache.add("/pwa-icon-512.png")
+  ])).then(() => self.location.hostname === "live-chat-admin.imdaderohani.in" ? undefined : cacheOfflinePages());
+  event.waitUntil(Promise.allSettled([
+    adminDeadline(warmPages,18000,"App prefetch"), cacheAdminOfflineShell(true)
+  ]).then(() => self.skipWaiting()));
+});
 
 self.addEventListener(
   "activate",
@@ -9504,7 +9608,8 @@ self.addEventListener(
                 key =>
                   ![
                     PAGE_CACHE,
-                    STATIC_CACHE
+                    STATIC_CACHE,
+                    ADMIN_SHELL_CACHE
                   ].includes(key)
               )
               .map(
@@ -9557,6 +9662,14 @@ self.addEventListener(
       return;
     }
 
+    if (requestUrl.origin === self.location.origin && requestUrl.pathname === ADMIN_SHELL_PATH) {
+      event.respondWith(adminOfflineNavigation(request, event));
+      return;
+    }
+    if (ADMIN_SDK_URLS.includes(requestUrl.href)) {
+      event.respondWith(adminOfflineSdk(request));
+      return;
+    }
     if (
       requestUrl.pathname
         .startsWith("/api/")
@@ -9697,6 +9810,10 @@ self.addEventListener(
       return;
     }
 
+    if (event.data.type === "IRCA_PREPARE_OFFLINE" || event.data.type === "IRCA_OFFLINE_PING") {
+      event.waitUntil(handleAdminOfflineMessage(event));
+      return;
+    }
     if (
       event.data.type ===
       "PWA_UPDATE_VERSION"
