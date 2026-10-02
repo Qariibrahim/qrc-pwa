@@ -1850,11 +1850,8 @@ async function handlePushRegister(
     new Date().toISOString();
 
 
-  /*
-    Same token dobara aaye to duplicate
-    row nahi banegi. Purani row update hogi.
-  */
-  await env.DB.prepare(
+  /* Preserve known identity when an older client omits device_id. */
+  const registerStatement = env.DB.prepare(
     `
       INSERT INTO push_tokens (
 
@@ -1876,7 +1873,7 @@ async function handlePushRegister(
       DO UPDATE SET
 
         device_id =
-          excluded.device_id,
+          COALESCE(excluded.device_id, push_tokens.device_id),
 
         platform =
           excluded.platform,
@@ -1898,8 +1895,18 @@ async function handlePushRegister(
     deviceInfo.browser,
     now,
     now
-  )
-  .run();
+  );
+
+  await env.DB.batch([
+    registerStatement,
+    env.DB.prepare(`
+      UPDATE push_tokens
+      SET status = 'inactive'
+      WHERE status = 'active' AND token <> ?
+        AND device_id IS NOT NULL AND device_id <> ''
+        AND device_id = (SELECT device_id FROM push_tokens WHERE token = ?)
+    `).bind(token, token)
+  ]);
 
 
   const countRow =
@@ -2589,9 +2596,24 @@ async function handleNotificationInbox(request, env) {
   });
 }
 
+/* Rows must be newest first. Unknown installations remain independent. */
+function uniquePushDevices(rows) {
+  const devices = new Set();
+  const tokens = new Set();
+  return rows.filter(row => {
+    const token = cleanText(row.token);
+    const device = cleanDeviceId(row.device_id);
+    if (!token || tokens.has(token) || (device && devices.has(device))) return false;
+    tokens.add(token);
+    if (device) devices.add(device);
+    return true;
+  });
+}
+
 async function handlePushBroadcast(
   request,
-  env
+  env,
+  occurrenceId = ""
 ) {
 
   if (request.method !== "GET") {
@@ -2722,15 +2744,25 @@ const linkText3 =
           browser
         FROM push_tokens
         WHERE status = 'active'
-        ORDER BY updated_at DESC
+        ORDER BY updated_at DESC, id DESC
       `
     ).all();
 
-  const users =
-    rows &&
-    Array.isArray(rows.results)
-      ? rows.results
-      : [];
+  const activeRows = rows && Array.isArray(rows.results) ? rows.results : [];
+  const users = uniquePushDevices(activeRows);
+  // One identity for this delivery, shared by all recipient tokens.
+  const notificationId = "broadcast:" + (occurrenceId || inboxRecord.id);
+  // A scheduled retry must not resend recipients already accepted by FCM.
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS push_delivery_receipts (
+      notification_id TEXT NOT NULL,
+      recipient_id TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      PRIMARY KEY (notification_id, recipient_id)
+    )
+  `).run();
+  await env.DB.prepare(`DELETE FROM push_delivery_receipts WHERE sent_at < ?`)
+    .bind(new Date(Date.now() - 7 * 86400000).toISOString()).run();
 
   if (!users.length) {
     return jsonResponse(
@@ -2758,6 +2790,7 @@ const linkText3 =
     let sent = 0;
     let failed = 0;
     let deactivated = 0;
+    let alreadySent = 0;
 
     const failures = [];
 
@@ -2786,6 +2819,15 @@ const linkText3 =
 
               try {
 
+                const recipientId = pushUser.device_id
+                  ? "device:" + cleanDeviceId(pushUser.device_id)
+                  : "token:" + pushUser.token;
+                const delivered = await env.DB.prepare(`
+                  SELECT sent_at FROM push_delivery_receipts
+                  WHERE notification_id = ? AND recipient_id = ?
+                `).bind(notificationId, recipientId).first();
+                if (delivered) return {ok: true, alreadySent: true, user: pushUser};
+
                 const payload = {
 
                   message: {
@@ -2796,6 +2838,8 @@ const linkText3 =
                       ),
 
                     data: {
+
+                      notification_id: notificationId,
 
                       title:
                         title,
@@ -2894,6 +2938,10 @@ action_text3:
                 }
 
                 if (response.ok) {
+                  await env.DB.prepare(`
+                    INSERT OR IGNORE INTO push_delivery_receipts
+                    (notification_id, recipient_id, sent_at) VALUES (?, ?, ?)
+                  `).bind(notificationId, recipientId, new Date().toISOString()).run();
                   return {
                     ok: true,
                     user:
@@ -2999,6 +3047,7 @@ action_text3:
         if (result.ok) {
 
           sent += 1;
+          if (result.alreadySent) alreadySent += 1;
 
         } else {
 
@@ -3045,6 +3094,12 @@ action_text3:
 
       total_active_tokens:
         users.length,
+
+      duplicate_device_tokens_skipped:
+        activeRows.length - users.length,
+
+      already_sent_recipients_skipped:
+        alreadySent,
 
       successfully_sent:
         sent,
@@ -3717,7 +3772,8 @@ async function runDueScheduledPushes(env) {
             internalUrl.toString(),
             { method: "GET" }
           ),
-          env
+          env,
+          "schedule:" + item.id + ":" + item.scheduled_at
         );
 
       let result = null;
@@ -9977,8 +10033,9 @@ badge:
         undefined,
 
       tag:
-        data.tag ||
-        "imdaderohani-notification",
+        data.notification_id
+          ? "ir-notification-" + data.notification_id
+          : (data.tag || "imdaderohani-notification"),
 
       renotify:
         false,
@@ -9993,6 +10050,8 @@ badge:
   notificationActions,
 
 data: {
+  notification_id: data.notification_id || "",
+
   url:
     targetUrl,
 
