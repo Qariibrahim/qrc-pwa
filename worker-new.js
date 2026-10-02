@@ -1769,6 +1769,68 @@ async function handleLiveChatVisitorPushNotify(request, env) {
   });
 }
 
+/* General announcements belong to the blog, not the dedicated Admin app.
+   Keep the private live_chat_admin_push_tokens subscription untouched. */
+async function ensureGeneralPushOrigins(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS push_token_origins (
+      token TEXT PRIMARY KEY,
+      origin TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+}
+
+function generalPushRequestOrigin(request) {
+  const origin = request.headers.get("Origin");
+  const value = origin || request.headers.get("Referer") || "";
+  try {
+    const parsed = new URL(value);
+    return /^https?:$/.test(parsed.protocol) ? parsed.origin : "";
+  } catch (error) { return ""; }
+}
+
+async function excludeAdminGeneralPush(env, request, token, deviceId) {
+  await ensureGeneralPushOrigins(env);
+  const origin = generalPushRequestOrigin(request);
+  const now = new Date().toISOString();
+  if (origin) {
+    await env.DB.prepare(`
+      INSERT INTO push_token_origins (token, origin, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(token) DO UPDATE SET
+        origin=excluded.origin, updated_at=excluded.updated_at
+    `).bind(token, origin, now).run();
+  }
+  const known = await env.DB.prepare(`
+    SELECT origin FROM push_token_origins WHERE token = ?
+  `).bind(token).first();
+  if (!known || known.origin !== LIVE_CHAT_ADMIN_ORIGIN) return false;
+
+  // Recover the old identity if an older client omits device_id. Only the
+  // exact token and this known device group are migrated; never blank IDs.
+  const old = await env.DB.prepare(`
+    SELECT device_id FROM push_tokens WHERE token = ?
+  `).bind(token).first();
+  const oldDeviceId = cleanDeviceId(old && old.device_id);
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO push_token_origins (token, origin, updated_at)
+      SELECT token, ?, ? FROM push_tokens
+      WHERE token = ? OR (? <> '' AND device_id = ?)
+        OR (? <> '' AND device_id = ?)
+      ON CONFLICT(token) DO UPDATE SET
+        origin=excluded.origin, updated_at=excluded.updated_at
+    `).bind(LIVE_CHAT_ADMIN_ORIGIN, now, token, deviceId, deviceId, oldDeviceId, oldDeviceId),
+    env.DB.prepare(`
+      UPDATE push_tokens SET status = 'inactive'
+      WHERE token = ? OR (? <> '' AND device_id = ?)
+        OR (? <> '' AND device_id = ?)
+    `).bind(token, deviceId, deviceId, oldDeviceId, oldDeviceId)
+  ]);
+  return true;
+}
+
 async function handlePushRegister(
   request,
   env
@@ -1839,6 +1901,14 @@ async function handlePushRegister(
     `
   ).run();
 
+
+  if (await excludeAdminGeneralPush(env, request, token, deviceId)) {
+    return jsonResponse({
+      success: true,
+      event: "admin_general_notifications_disabled",
+      private_chat_notifications: "unchanged"
+    });
+  }
 
   const deviceInfo =
     getDeviceInfo(
@@ -2270,6 +2340,8 @@ async function handlePushTestSend(
   }
 
 
+  await ensureGeneralPushOrigins(env);
+
   const pushUser =
     await env.DB.prepare(
       `
@@ -2280,10 +2352,13 @@ async function handlePushTestSend(
           browser
         FROM push_tokens
         WHERE status = 'active'
+          AND token NOT IN (
+            SELECT token FROM push_token_origins WHERE origin = ?
+          )
         ORDER BY updated_at DESC
         LIMIT 1
       `
-    ).first();
+    ).bind(LIVE_CHAT_ADMIN_ORIGIN).first();
 
 
   if (
@@ -2733,6 +2808,8 @@ const linkText3 =
       }
     );
    
+  await ensureGeneralPushOrigins(env);
+
   const rows =
     await env.DB.prepare(
       `
@@ -2744,9 +2821,12 @@ const linkText3 =
           browser
         FROM push_tokens
         WHERE status = 'active'
+          AND token NOT IN (
+            SELECT token FROM push_token_origins WHERE origin = ?
+          )
         ORDER BY updated_at DESC, id DESC
       `
-    ).all();
+    ).bind(LIVE_CHAT_ADMIN_ORIGIN).all();
 
   const activeRows = rows && Array.isArray(rows.results) ? rows.results : [];
   const users = uniquePushDevices(activeRows);
