@@ -3517,6 +3517,28 @@ async function ensureScheduledPushTable(env) {
     `).run();
   }
 
+  // v44: nullable membership keeps all existing schedules standalone.
+  if (!columnNames.has("campaign_id")) {
+    try {
+      await env.DB.prepare(`ALTER TABLE scheduled_push_notifications ADD COLUMN campaign_id TEXT`).run();
+    } catch (error) {
+      // Another request or cron may have completed the same first-use migration.
+      if (!/duplicate column name/i.test(String(error && error.message))) throw error;
+    }
+  }
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS push_notification_campaigns (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      name_key TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_push_schedule_campaign
+    ON scheduled_push_notifications (campaign_id, id)
+  `).run();
+
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_scheduled_push_due
     ON scheduled_push_notifications
@@ -3524,67 +3546,162 @@ async function ensureScheduledPushTable(env) {
   `).run();
 }
 
-async function saveScheduledPush(env, data) {
-  if (!env.DB) {
-    throw new Error(
-      "D1 DB scheduled notification ke liye available nahi hai."
-    );
-  }
+// Campaign grouping does not change when or how individual schedules are delivered.
+function notificationCampaignError(message, status = 400) {
+  const error = new Error(message);
+  error.campaignStatus = status;
+  return error;
+}
 
+function notificationCampaignName(value) {
+  const title = cleanText(value, "").trim();
+  if (!title || title.length > 120) {
+    throw notificationCampaignError("Campaign ka naya naam 1 se 120 characters mein likhein.");
+  }
+  return { title, key: title.normalize("NFKC").replace(/\s+/g, " ").toLowerCase() };
+}
+
+async function notificationCampaignBatch(env, statements) {
+  try {
+    return await env.DB.batch(statements);
+  } catch (error) {
+    if (/UNIQUE constraint failed:\s*push_notification_campaigns\.name_key/i.test(String(error && error.message))) {
+      throw notificationCampaignError("Is naam ka Campaign pehle se hai. Koi doosra naam likhein.", 409);
+    }
+    throw error;
+  }
+}
+
+async function listNotificationCampaigns(env) {
+  const rows = await env.DB.prepare(`
+    SELECT c.id, c.title, c.created_at,
+      COUNT(s.id) AS child_count,
+      SUM(CASE WHEN s.status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
+      CASE
+        WHEN SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END) > 0 THEN 'failed'
+        WHEN SUM(CASE WHEN s.status IN ('pending', 'processing') THEN 1 ELSE 0 END) > 0 THEN 'pending'
+        WHEN SUM(CASE WHEN s.status = 'draft' THEN 1 ELSE 0 END) > 0 OR COUNT(s.id) = 0 THEN 'draft'
+        ELSE 'sent'
+      END AS status
+    FROM push_notification_campaigns c
+    LEFT JOIN scheduled_push_notifications s ON s.campaign_id = c.id
+    GROUP BY c.id
+    ORDER BY c.created_at ASC, c.id ASC
+  `).all();
+  return rows.results || [];
+}
+
+async function requireNotificationCampaign(env, id) {
+  const campaign = await env.DB.prepare(`
+    SELECT id, title FROM push_notification_campaigns WHERE id = ?
+  `).bind(cleanText(id, "")).first();
+  if (!campaign) throw notificationCampaignError("Campaign nahi mila. List dobara kholein.", 404);
+  return campaign;
+}
+
+async function handleNotificationCampaignAction(env, body, action) {
+  if (!env.DB) return databaseMissingResponse();
   await ensureScheduledPushTable(env);
 
-  const createdAt =
-    new Date().toISOString();
+  if (action === "list_campaigns") {
+    return jsonResponse({success: true, campaigns: await listNotificationCampaigns(env)});
+  }
 
-  const result =
-    await env.DB.prepare(`
-      INSERT INTO scheduled_push_notifications (
-        title,
-        message,
-        target_url,
-        link_text,
-        scheduled_at,
-        status,
-        attempts,
-        created_at,
-        repeat_type,
-        updated_at,
-        timezone_offset_minutes
-        ,link_data,
-        wait_repeat
-      ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
-    `)
-    .bind(
-      data.title,
-      data.message,
-      data.url || "",
-      data.link_text || "",
-      data.scheduled_at,
-      data.status === "draft"
-        ? "draft"
-        : "pending",
-      createdAt,
-      normalizeRepeatType(data.repeat_type),
-      createdAt,
-      Number(data.timezone_offset_minutes || 0)
-      ,JSON.stringify(
-        Array.isArray(data.links)
-          ? data.links.slice(0, 3)
-          : []
-      ),
-      normalizeWaitRepeat(data.wait_repeat)
-    )
-    .run();
+  const campaign = await requireNotificationCampaign(env, body.campaign_id);
 
-  return {
-    id:
-      result && result.meta
-        ? result.meta.last_row_id
-        : null,
-    scheduled_at:
-      data.scheduled_at
-  };
+  if (action === "list_campaign_children") {
+    // Keyset pagination makes every child accessible, including campaigns over 200 items.
+    const after = Number(body.after_id || 0);
+    if (!Number.isSafeInteger(after) || after < 0) {
+      throw notificationCampaignError("Page ki ID durust nahi hai.");
+    }
+    const rows = await env.DB.prepare(`
+      SELECT * FROM scheduled_push_notifications
+      WHERE campaign_id = ? AND id > ? ORDER BY id ASC LIMIT 101
+    `).bind(campaign.id, after).all();
+    const schedules = (rows.results || []).slice(0, 100);
+    return jsonResponse({success: true, campaign, schedules,
+      next_cursor: (rows.results || []).length > 100 ? schedules[schedules.length - 1].id : null});
+  }
+
+  if (action === "copy_campaign") {
+    const name = notificationCampaignName(body.name);
+    const newId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    // One D1 transaction: name conflict or an insertion failure leaves no partial copy.
+    const results = await notificationCampaignBatch(env, [
+      env.DB.prepare(`
+        INSERT INTO push_notification_campaigns (id, title, name_key, created_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(newId, name.title, name.key, now),
+      env.DB.prepare(`
+        INSERT INTO scheduled_push_notifications (
+          title, message, target_url, link_text, scheduled_at, status, attempts,
+          last_error, created_at, processing_at, sent_at, repeat_type, updated_at,
+          timezone_offset_minutes, link_data, wait_repeat, campaign_id
+        )
+        SELECT
+          CASE WHEN id = (SELECT MIN(id) FROM scheduled_push_notifications WHERE campaign_id = ?)
+            THEN ? ELSE title END,
+          message, target_url, link_text, scheduled_at, 'draft', 0,
+          NULL, ?, NULL, NULL, repeat_type, ?, timezone_offset_minutes, link_data, wait_repeat, ?
+        FROM scheduled_push_notifications WHERE campaign_id = ? ORDER BY id ASC
+      `).bind(campaign.id, name.title, now, now, newId, campaign.id)
+    ]);
+    return jsonResponse({success: true, event: "campaign_copied", campaign_id: newId,
+      campaign_title: name.title, child_count: Number(results[1].meta.changes || 0), status: "draft"}, 201);
+  }
+  throw notificationCampaignError("Campaign action durust nahi hai.");
 }
+
+async function saveScheduledPush(env, data) {
+  if (!env.DB) throw new Error("D1 DB scheduled notification ke liye available nahi hai.");
+  await ensureScheduledPushTable(env);
+  const now = new Date().toISOString();
+  let campaignId = null;
+  let campaignTitle = null;
+  const statements = [];
+
+  if (data.campaign_enabled === true) {
+    if (data.campaign_id) {
+      const campaign = await requireNotificationCampaign(env, data.campaign_id);
+      campaignId = campaign.id;
+      campaignTitle = campaign.title;
+    } else {
+      const name = notificationCampaignName(data.title);
+      campaignId = crypto.randomUUID();
+      campaignTitle = name.title;
+      statements.push(env.DB.prepare(`
+        INSERT INTO push_notification_campaigns (id, title, name_key, created_at)
+        VALUES (?, ?, ?, ?)
+      `).bind(campaignId, name.title, name.key, now));
+    }
+  }
+  statements.push(env.DB.prepare(`
+    INSERT INTO scheduled_push_notifications (
+      title, message, target_url, link_text, scheduled_at, status, attempts,
+      created_at, repeat_type, updated_at, timezone_offset_minutes, link_data, wait_repeat, campaign_id
+    ) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(data.title, data.message, data.url || "", data.link_text || "", data.scheduled_at,
+    data.status === "draft" ? "draft" : "pending", now, normalizeRepeatType(data.repeat_type), now,
+    Number(data.timezone_offset_minutes || 0), JSON.stringify(Array.isArray(data.links) ? data.links.slice(0, 3) : []),
+    normalizeWaitRepeat(data.wait_repeat), campaignId));
+  const results = await notificationCampaignBatch(env, statements);
+  return {id: results[results.length - 1].meta.last_row_id, scheduled_at: data.scheduled_at,
+    campaign_id: campaignId, campaign_title: campaignTitle};
+}
+
+async function handlePushAdminPage(request, env) {
+  try {
+    return await handlePushAdminPageCore(request, env);
+  } catch (error) {
+    if (error && error.campaignStatus) {
+      return jsonResponse({success: false, error: error.message}, error.campaignStatus);
+    }
+    throw error;
+  }
+}
+
 
 function normalizeRepeatType(value) {
   const allowed = [
@@ -3962,7 +4079,7 @@ async function runDueScheduledPushes(env) {
   }
 }
 
-async function handlePushAdminPage(
+async function handlePushAdminPageCore(
   request,
   env
 ) {
@@ -4012,6 +4129,10 @@ async function handlePushAdminPage(
         "send_or_schedule"
       );
 
+    if (["list_campaigns", "list_campaign_children", "copy_campaign"].includes(adminAction)) {
+      return handleNotificationCampaignAction(env, body, adminAction);
+    }
+
     if (
       adminAction === "list_schedules"
     ) {
@@ -4040,7 +4161,8 @@ async function handlePushAdminPage(
             created_at,
             sent_at
           FROM scheduled_push_notifications
-          WHERE status IN ('draft', 'pending', 'processing', 'failed', 'sent')
+          WHERE campaign_id IS NULL
+            AND status IN ('draft', 'pending', 'processing', 'failed', 'sent')
           ORDER BY scheduled_at ASC
           LIMIT 200
         `).all();
@@ -4048,6 +4170,7 @@ async function handlePushAdminPage(
       return jsonResponse({
         success: true,
         event: "schedule_list",
+        campaigns: await listNotificationCampaigns(env),
         schedules:
           scheduleRows &&
           Array.isArray(scheduleRows.results)
@@ -4102,7 +4225,8 @@ async function handlePushAdminPage(
             updated_at,
             timezone_offset_minutes,
             link_data,
-            wait_repeat
+            wait_repeat,
+            campaign_id
           )
           SELECT
             title,
@@ -4120,7 +4244,8 @@ async function handlePushAdminPage(
             ?,
             timezone_offset_minutes,
             link_data,
-            wait_repeat
+            wait_repeat,
+            campaign_id
           FROM scheduled_push_notifications
           WHERE id = ?
         `)
@@ -4624,6 +4749,10 @@ const repeatType =
 const saveAsDraft =
   body.save_as_draft === true;
 
+if (body.campaign_enabled === true && !scheduleAt && !saveAsDraft) {
+  throw notificationCampaignError("Campaign ke liye DATE AUR TIME PAR SET KAREIN dabayein.");
+}
+
 /* =========================================
    SINGLE LINK / MULTI LINK FINAL TARGET
    ========================================= */
@@ -4746,7 +4875,9 @@ if (
             status:
               saveAsDraft ? "draft" : "pending",
             links:
-              editableLinks
+              editableLinks,
+            campaign_enabled: body.campaign_enabled === true,
+            campaign_id: cleanText(body.campaign_id, "")
           }
         );
 
@@ -4757,6 +4888,8 @@ if (
             saveAsDraft
               ? "notification_draft_saved"
               : "notification_scheduled",
+          campaign_id: scheduled.campaign_id,
+          campaign_title: scheduled.campaign_title,
           schedule_id:
             scheduled.id,
           scheduled_at:
@@ -5291,6 +5424,36 @@ textarea{
   background:#0b5ed7;
 }
 
+.message-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;}
+.message-heading label{margin:0;}
+#campaignSelect{width:55%;max-width:230px;min-width:0;padding:8px 10px;min-height:38px;font-size:13px;color:#0b318f;direction:ltr;text-align:left;}
+#campaignSelect:disabled{opacity:.5;cursor:not-allowed;}
+.message-options{display:flex;direction:ltr;align-items:center;gap:16px;flex-wrap:wrap;}
+.message-options label{white-space:nowrap;}
+.message-meta-row{flex-wrap:wrap;gap:8px;}
+.message-meta-row .counter{margin-inline-end:auto;font-size:12px;}
+.campaign-row-detail{display:block;font-size:12px;font-weight:500;margin-top:7px;opacity:.94;direction:ltr;}
+.campaign-summary-row .schedule-summary-button,#campaignList .schedule-summary-button{overflow-wrap:anywhere;}
+#campaignModal{z-index:100000;}
+#campaignCopyModal{z-index:100001;}
+#campaignCopyModal .modal-card{max-width:520px;}
+.campaign-help{font-size:13px;color:#667085;line-height:1.65;direction:ltr;text-align:left;}
+.campaign-source{color:#0b318f;font-weight:700;overflow-wrap:anywhere;}
+#campaignCopyError{color:#b42318;direction:ltr;text-align:left;}
+.campaign-back{border:1px solid #ccd5e5;background:#eef4ff;color:#0b318f;border-radius:10px;padding:10px 12px;margin-bottom:16px;cursor:pointer;}
+.modal-head h2{min-width:0;overflow-wrap:anywhere;}
+.modal-close{flex-shrink:0;}
+@media(max-width:400px){
+  .message-options{gap:10px;}
+  .message-options label{font-size:12px;gap:5px;}
+  .message-options input{width:18px;height:18px;}
+  #campaignSelect{width:57%;}
+  #campaignModal .modal-card{padding:14px;}
+  #campaignList .schedule-summary-button{font-size:15px;padding:12px;}
+  #campaignList .item-actions{gap:5px;}
+  #campaignList .item-actions button{padding:10px 5px;font-size:12px;}
+}
+
 </style>
 
 </head>
@@ -5359,9 +5522,13 @@ textarea{
 
     <div class="field">
 
-      <label>
-        💬 Message
-      </label>
+      <div class="message-heading">
+        <select id="campaignSelect" disabled aria-label="Existing Campaign"
+          title="Campaign tick karein; naya Campaign banane ke liye ise khali rakhein.">
+          <option value="">Campaign chunein</option>
+        </select>
+        <label for="pushMessage">💬 Message</label>
+      </div>
 
       <textarea
         id="pushMessage"
@@ -5377,13 +5544,14 @@ textarea{
           0 / 500
         </div>
 
-        <label class="draft-check-label">
-          <input
-            id="saveAsDraft"
-            type="checkbox"
-          />
-          Save Draft
-        </label>
+        <div class="message-options">
+          <label class="draft-check-label">
+            <input id="campaignEnabled" type="checkbox" /> Campaign
+          </label>
+          <label class="draft-check-label">
+            <input id="saveAsDraft" type="checkbox" /> Save Draft
+          </label>
+        </div>
       </div>
 
     </div>
@@ -5541,6 +5709,34 @@ textarea{
       </div>
     </div>
   </div>
+</div>
+
+
+<div class="schedule-modal" id="campaignModal" role="dialog" aria-modal="true" aria-labelledby="campaignModalTitle">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h2 id="campaignModalTitle"></h2>
+      <button class="modal-close" id="campaignClose" type="button" aria-label="Close Campaign">×</button>
+    </div>
+    <button class="campaign-back" id="campaignBack" type="button" hidden>← Campaign notifications</button>
+    <div id="campaignList"></div>
+  </div>
+</div>
+<div class="schedule-modal" id="campaignCopyModal" role="dialog" aria-modal="true" aria-labelledby="campaignCopyTitle">
+  <form class="modal-card" id="campaignCopyForm">
+    <div class="modal-head">
+      <h2 id="campaignCopyTitle">Copy Campaign</h2>
+      <button class="modal-close" id="campaignCopyClose" type="button" aria-label="Close Copy Campaign">×</button>
+    </div>
+    <p id="campaignCopySource" class="campaign-source" dir="auto"></p>
+    <label for="campaignCopyName">Naya Campaign naam</label>
+    <input id="campaignCopyName" maxlength="120" required autocomplete="off" dir="auto"
+      placeholder="Alag naya naam likhein" aria-describedby="campaignCopyHelp campaignCopyError"/>
+    <p id="campaignCopyHelp" class="campaign-help">Pehli notification ka title bhi yehi hoga. Baqi titles, messages, dates aur options same rahenge. Copies Draft mein save hongi.</p>
+    <p id="campaignCopyError" role="alert"></p>
+    <button type="submit" class="send-btn" id="campaignCopySave" disabled>COPY CAMPAIGN</button>
+    <button type="button" class="summary-btn" id="campaignCopyCancel">Cancel</button>
+  </form>
 </div>
 
 
@@ -5881,8 +6077,9 @@ var pushLinkCount = 0;
     return data;
   }
 
-  function renderScheduleEditor(schedules) {
-    scheduleList.innerHTML = "";
+  function renderScheduleEditor(schedules, editorTarget) {
+    editorTarget = editorTarget || scheduleList;
+    editorTarget.innerHTML = "";
 
     if (!schedules.length) {
       var empty =
@@ -5890,7 +6087,7 @@ var pushLinkCount = 0;
       empty.className = "empty-schedules";
       empty.textContent =
         "Koi scheduled notification mojood nahi hai.";
-      scheduleList.appendChild(empty);
+      editorTarget.appendChild(empty);
       return;
     }
 
@@ -6325,177 +6522,318 @@ var pushLinkCount = 0;
 
           item.appendChild(liveButton);
         }
-        scheduleList.appendChild(item);
+        editorTarget.appendChild(item);
       }
     );
   }
 
-  function renderScheduleList(schedules) {
-    scheduleList.innerHTML = "";
+  var campaignEnabled = document.getElementById("campaignEnabled");
+  var campaignSelect = document.getElementById("campaignSelect");
+  var campaignModal = document.getElementById("campaignModal");
+  var campaignModalTitle = document.getElementById("campaignModalTitle");
+  var campaignList = document.getElementById("campaignList");
+  var campaignBack = document.getElementById("campaignBack");
+  var campaignCopyModal = document.getElementById("campaignCopyModal");
+  var campaignCopyName = document.getElementById("campaignCopyName");
+  var campaignCopyError = document.getElementById("campaignCopyError");
+  var campaignCopySave = document.getElementById("campaignCopySave");
+  var knownCampaigns = [];
+  var activeCampaign = null;
+  var copyCampaignSource = null;
+  var campaignCursor = null;
+  var campaignLoadVersion = 0;
+  var campaignOptionsVersion = 0;
+  var campaignCopyBusy = false;
+  var campaignOpener = null;
+  var copyOpener = null;
 
-    modalTitle.textContent =
-      "📋 Scheduled Notifications";
+  function listMessage(target, message) {
+    target.replaceChildren();
+    var note = document.createElement("div");
+    note.className = "empty-schedules";
+    note.textContent = message;
+    target.appendChild(note);
+  }
 
-    if (!schedules.length) {
-      var empty =
-        document.createElement("div");
-      empty.className = "empty-schedules";
-      empty.textContent =
-        "Koi scheduled notification mojood nahi hai.";
-      scheduleList.appendChild(empty);
+  function setCampaignOptions(campaigns, selectedId) {
+    knownCampaigns = campaigns;
+    var selected = selectedId === undefined ? campaignSelect.value : selectedId;
+    campaignSelect.replaceChildren(new Option("Campaign chunein", ""));
+    campaigns.forEach(function(campaign) {
+      campaignSelect.add(new Option(campaign.title, campaign.id));
+    });
+    campaignSelect.value = campaigns.some(function(c) {return c.id === selected;}) ? selected : "";
+  }
+
+  async function loadCampaignOptions(selectedId) {
+    var key = adminKey.value.trim();
+    var version = ++campaignOptionsVersion;
+    if (!key) {
+      setCampaignOptions([]);
+      showResult("error", "Campaign chunne ke liye pehle Admin Key likhein.");
       return;
     }
-
-    schedules.forEach(
-      function(schedule){
-        var summaryRow =
-          document.createElement("div");
-        summaryRow.className =
-          "schedule-summary-row";
-
-        var editButton =
-          document.createElement("button");
-
-        var copyButton =
-          document.createElement("button");
-
-        var status =
-          String(schedule.status || "pending")
-            .toLowerCase();
-
-        if (
-          status !== "pending" &&
-          status !== "processing" &&
-          status !== "failed" &&
-          status !== "sent" &&
-          status !== "draft"
-        ) {
-          status = "pending";
-        }
-
-        editButton.type = "button";
-        editButton.className =
-          "schedule-summary-button " +
-          status;
-        editButton.textContent =
-          status === "draft"
-            ? "📝 EDIT DRAFT"
-            : "✏️ EDIT NOTIFICATION";
-        editButton.setAttribute(
-          "aria-label",
-          "Edit Schedule " +
-          String(schedule.id) +
-          " " + status
-        );
-
-        editButton.addEventListener(
-          "click",
-          function(){
-            modalTitle.textContent =
-              status === "draft"
-                ? "📝 Edit Draft"
-                : "✏️ Edit Notification";
-            renderScheduleEditor([schedule]);
-          }
-        );
-
-        copyButton.type = "button";
-        copyButton.className =
-          "schedule-copy-button";
-        copyButton.textContent = "COPY";
-        copyButton.setAttribute(
-          "aria-label",
-          "Copy Schedule " +
-          String(schedule.id)
-        );
-
-        copyButton.addEventListener(
-          "click",
-          async function(){
-            if (
-              !window.confirm(
-                "Kya aap is notification ki mukammal copy Draft mein banana chahte hain?"
-              )
-            ) {
-              return;
-            }
-
-            copyButton.disabled = true;
-            copyButton.textContent = "...";
-
-            try {
-              var copied =
-                await adminScheduleRequest({
-                  action: "copy_schedule",
-                  key: adminKey.value.trim(),
-                  schedule_id: schedule.id
-                });
-
-              window.alert(
-                "Notification ki copy EDIT DRAFT ke roop mein ban gayi. Draft ID: " +
-                String(copied.schedule_id || "-")
-              );
-              await loadSchedules();
-            } catch(error) {
-              window.alert(
-                error && error.message
-                  ? error.message
-                  : String(error)
-              );
-            } finally {
-              copyButton.disabled = false;
-              copyButton.textContent = "COPY";
-            }
-          }
-        );
-
-        summaryRow.appendChild(editButton);
-        summaryRow.appendChild(copyButton);
-        scheduleList.appendChild(summaryRow);
+    try {
+      var data = await adminScheduleRequest({action: "list_campaigns", key: key});
+      if (version === campaignOptionsVersion && key === adminKey.value.trim()) {
+        setCampaignOptions(data.campaigns || [], selectedId);
       }
-    );
+    } catch (error) {
+      if (version === campaignOptionsVersion) {
+        setCampaignOptions([]);
+        showResult("error", error.message);
+      }
+    }
+  }
+
+  campaignEnabled.addEventListener("change", function() {
+    campaignSelect.disabled = !campaignEnabled.checked;
+    if (campaignEnabled.checked) loadCampaignOptions();
+    else { campaignOptionsVersion++; campaignSelect.value = ""; }
+  });
+  adminKey.addEventListener("input", function() {
+    campaignOptionsVersion++;
+    setCampaignOptions([]);
+  });
+  adminKey.addEventListener("change", function() {
+    if (campaignEnabled.checked) loadCampaignOptions();
+  });
+
+  function closeCampaignPopup() {
+    if (campaignCopyBusy) return;
+    closeCampaignCopy();
+    campaignLoadVersion++;
+    campaignModal.classList.remove("open");
+    scheduleModal.inert = false;
+    activeCampaign = null;
+    if (campaignOpener && campaignOpener.isConnected) campaignOpener.focus();
+    else modalClose.focus();
+  }
+
+  function openCampaignPopup(campaign, opener) {
+    activeCampaign = campaign;
+    campaignOpener = opener || null;
+    campaignModalTitle.textContent = campaign.title;
+    campaignModal.classList.add("open");
+    scheduleModal.inert = true;
+    document.getElementById("campaignClose").focus();
+    loadCampaignChildren(false);
+  }
+
+  async function loadCampaignChildren(append) {
+    if (!activeCampaign) return;
+    var campaignId = activeCampaign.id;
+    var version = ++campaignLoadVersion;
+    var more = campaignList.querySelector(".campaign-more");
+    if (more) more.remove();
+    if (!append) {
+      campaignCursor = null;
+      campaignBack.hidden = true;
+      listMessage(campaignList, "Campaign notifications load ho rahi hain...");
+    }
+    try {
+      var data = await adminScheduleRequest({action: "list_campaign_children", key: adminKey.value.trim(),
+        campaign_id: campaignId, after_id: append ? campaignCursor : 0});
+      if (version !== campaignLoadVersion || !activeCampaign || activeCampaign.id !== campaignId) return;
+      activeCampaign = data.campaign;
+      campaignModalTitle.textContent = data.campaign.title;
+      if (!append) campaignList.replaceChildren();
+      renderNotificationRows(data.schedules || [], campaignList, true);
+      if (!campaignList.children.length) listMessage(campaignList, "Is Campaign mein abhi koi notification nahi hai.");
+      campaignCursor = data.next_cursor;
+      if (campaignCursor !== null) {
+        var loadMore = document.createElement("button");
+        loadMore.type = "button";
+        loadMore.className = "summary-btn campaign-more";
+        loadMore.textContent = "Aur notifications dekhein";
+        loadMore.addEventListener("click", function() { loadCampaignChildren(true); });
+        campaignList.appendChild(loadMore);
+      }
+    } catch (error) {
+      if (version !== campaignLoadVersion) return;
+      if (!append) listMessage(campaignList, error.message);
+      var retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "summary-btn campaign-more";
+      retry.textContent = "Dobara load karein";
+      retry.addEventListener("click", function() {loadCampaignChildren(append);});
+      campaignList.appendChild(retry);
+    }
+  }
+
+  function openCampaignCopy(campaign, opener) {
+    copyCampaignSource = campaign;
+    copyOpener = opener;
+    campaignCopyName.value = "";
+    campaignCopyError.textContent = "";
+    campaignCopySave.disabled = true;
+    document.getElementById("campaignCopySource").textContent = campaign.title;
+    campaignCopyModal.classList.add("open");
+    campaignModal.inert = true;
+    scheduleModal.inert = true;
+    campaignCopyName.focus();
+  }
+
+  function closeCampaignCopy() {
+    if (campaignCopyBusy) return;
+    campaignCopyModal.classList.remove("open");
+    campaignModal.inert = false;
+    scheduleModal.inert = campaignModal.classList.contains("open");
+    copyCampaignSource = null;
+    if (copyOpener && copyOpener.isConnected) copyOpener.focus();
+  }
+
+  campaignCopyName.addEventListener("input", function() {
+    campaignCopySave.disabled = !campaignCopyName.value.trim() || campaignCopyBusy;
+    campaignCopyError.textContent = "";
+  });
+  document.getElementById("campaignCopyForm").addEventListener("submit", async function(event) {
+    event.preventDefault();
+    if (campaignCopyBusy || !copyCampaignSource) return;
+    var name = campaignCopyName.value.trim();
+    function nameKey(value) {return value.normalize("NFKC").replace(/\\s+/g, " ").toLowerCase();}
+    if (!name || knownCampaigns.some(function(c) {return nameKey(c.title) === nameKey(name);})) {
+      campaignCopyError.textContent = "Campaign ke liye alag naya naam likhein.";
+      campaignCopyName.focus();
+      return;
+    }
+    campaignCopyBusy = true;
+    campaignCopySave.disabled = true;
+    campaignCopySave.textContent = "Copy ho raha hai...";
+    try {
+      var copied = await adminScheduleRequest({action: "copy_campaign", key: adminKey.value.trim(),
+        campaign_id: copyCampaignSource.id, name: name});
+      campaignCopyBusy = false;
+      closeCampaignCopy();
+      await loadSchedules();
+      openCampaignPopup({id: copied.campaign_id, title: copied.campaign_title});
+      window.alert("Campaign copy ho gaya. Tamam " + copied.child_count +
+        " notifications Draft mein hain. Har child khol kar date check karein aur LIVE dabayein.");
+    } catch (error) {
+      campaignCopyError.textContent = error.message;
+    } finally {
+      campaignCopyBusy = false;
+      campaignCopySave.disabled = !campaignCopyName.value.trim();
+      campaignCopySave.textContent = "COPY CAMPAIGN";
+    }
+  });
+  document.getElementById("campaignClose").addEventListener("click", closeCampaignPopup);
+  document.getElementById("campaignCopyClose").addEventListener("click", closeCampaignCopy);
+  document.getElementById("campaignCopyCancel").addEventListener("click", closeCampaignCopy);
+  campaignBack.addEventListener("click", function() {loadCampaignChildren(false);});
+  campaignModal.addEventListener("click", function(event) {if (event.target === campaignModal) closeCampaignPopup();});
+  campaignCopyModal.addEventListener("click", function(event) {if (event.target === campaignCopyModal) closeCampaignCopy();});
+  document.addEventListener("keydown", function(event) {
+    var top = campaignCopyModal.classList.contains("open") ? campaignCopyModal :
+      campaignModal.classList.contains("open") ? campaignModal : null;
+    if (!top) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      if (top === campaignCopyModal) closeCampaignCopy(); else closeCampaignPopup();
+    } else if (event.key === "Tab") {
+      var focusable = Array.from(top.querySelectorAll("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)"))
+        .filter(function(el) {return !el.hidden && el.getClientRects().length;});
+      var first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last.focus();}
+      else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first.focus();}
+    }
+  });
+
+  function renderNotificationRows(schedules, target, inCampaign) {
+    schedules.forEach(function(schedule) {
+      var row = document.createElement("div");
+      row.className = "schedule-summary-row";
+      var status = String(schedule.status || "pending").toLowerCase();
+      if (["pending", "processing", "failed", "sent", "draft"].indexOf(status) < 0) status = "pending";
+      var edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "schedule-summary-button " + status;
+      edit.textContent = inCampaign ? schedule.title : status === "draft" ? "📝 EDIT DRAFT" : "✏️ EDIT NOTIFICATION";
+      edit.setAttribute("aria-label", "Edit Schedule " + schedule.id + " " + status);
+      if (inCampaign) {
+        var detail = document.createElement("small");
+        detail.className = "campaign-row-detail";
+        detail.textContent = (status === "draft" ? "EDIT DRAFT" : "EDIT NOTIFICATION") + " · " +
+          new Date(schedule.scheduled_at).toLocaleString();
+        edit.appendChild(detail);
+      }
+      edit.addEventListener("click", function() {
+        if (inCampaign) {
+          campaignLoadVersion++;
+          campaignBack.hidden = false;
+          renderScheduleEditor([schedule], campaignList);
+        } else {
+          modalTitle.textContent = status === "draft" ? "📝 Edit Draft" : "✏️ Edit Notification";
+          renderScheduleEditor([schedule]);
+        }
+      });
+      var copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "schedule-copy-button";
+      copy.textContent = "COPY";
+      copy.setAttribute("aria-label", "Copy Schedule " + schedule.id);
+      copy.addEventListener("click", async function() {
+        if (!window.confirm("Kya aap is notification ki mukammal copy Draft mein banana chahte hain?")) return;
+        copy.disabled = true;
+        try {
+          await adminScheduleRequest({action: "copy_schedule", key: adminKey.value.trim(), schedule_id: schedule.id});
+          await loadSchedules();
+          window.alert(inCampaign ? "Notification isi Campaign mein Draft ke taur par copy ho gayi." : "Notification Draft mein copy ho gayi.");
+        } catch (error) { window.alert(error.message); }
+        finally { copy.disabled = false; }
+      });
+      row.append(edit, copy);
+      target.appendChild(row);
+    });
+  }
+
+  function renderScheduleList(schedules, campaigns) {
+    scheduleList.replaceChildren();
+    modalTitle.textContent = "📋 Scheduled Notifications";
+    campaigns.forEach(function(campaign) {
+      var row = document.createElement("div");
+      row.className = "schedule-summary-row campaign-summary-row";
+      var open = document.createElement("button");
+      open.type = "button";
+      open.className = "schedule-summary-button " + campaign.status;
+      open.textContent = campaign.title;
+      open.setAttribute("aria-label", "Open Campaign " + campaign.title);
+      var detail = document.createElement("small");
+      detail.className = "campaign-row-detail";
+      detail.textContent = "Campaign · " + campaign.child_count + " notifications" +
+        (Number(campaign.draft_count) ? " · " + campaign.draft_count + " drafts" : "");
+      open.appendChild(detail);
+      open.addEventListener("click", function() {openCampaignPopup(campaign, open);});
+      var copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "schedule-copy-button";
+      copy.textContent = "COPY";
+      copy.setAttribute("aria-label", "Copy Campaign " + campaign.title);
+      copy.addEventListener("click", function() {openCampaignCopy(campaign, copy);});
+      row.append(open, copy);
+      scheduleList.appendChild(row);
+    });
+    renderNotificationRows(schedules, scheduleList, false);
+    if (!scheduleList.children.length) listMessage(scheduleList, "Koi scheduled notification mojood nahi hai.");
   }
 
   async function loadSchedules() {
-    var key =
-      adminKey.value.trim();
-
+    var key = adminKey.value.trim();
     if (!key) {
+      closeCampaignPopup();
       scheduleModal.classList.remove("open");
-      showResult(
-        "error",
-        "Summary dekhne ke liye pehle Admin Key likhein."
-      );
+      showResult("error", "Summary dekhne ke liye pehle Admin Key likhein.");
       return;
     }
-
-    scheduleList.innerHTML =
-      '<div class="empty-schedules">Schedule list load ho rahi hai...</div>';
-
+    listMessage(scheduleList, "Schedule list load ho rahi hai...");
     try {
-      var data =
-        await adminScheduleRequest({
-          action: "list_schedules",
-          key: key
-        });
-
-      renderScheduleList(
-        Array.isArray(data.schedules)
-          ? data.schedules
-          : []
-      );
-    } catch(error) {
-      scheduleList.innerHTML = "";
-      var failed =
-        document.createElement("div");
-      failed.className = "empty-schedules";
-      failed.textContent =
-        error && error.message
-          ? error.message
-          : String(error);
-      scheduleList.appendChild(failed);
-    }
+      var data = await adminScheduleRequest({action: "list_schedules", key: key});
+      setCampaignOptions(data.campaigns || []);
+      renderScheduleList(data.schedules || [], data.campaigns || []);
+      if (activeCampaign && campaignModal.classList.contains("open")) await loadCampaignChildren(false);
+    } catch (error) { listMessage(scheduleList, error.message); }
   }
+
 
   summaryButton.addEventListener(
     "click",
@@ -6631,6 +6969,11 @@ addPushLinkButton.addEventListener(
 
       var draftMode =
         Boolean(saveAsDraft.checked);
+
+      if (campaignEnabled.checked && !scheduleMode && !draftMode) {
+        showResult("error", "Campaign ke liye neeche DATE AUR TIME PAR SET KAREIN dabayein.");
+        return;
+      }
 
       var key =
         adminKey.value.trim();
@@ -6860,6 +7203,10 @@ wait_repeat:
 timezone_offset_minutes:
   new Date().getTimezoneOffset(),
 
+campaign_enabled:
+  campaignEnabled.checked,
+campaign_id:
+  campaignEnabled.checked ? campaignSelect.value : "",
 save_as_draft:
   draftMode
                 })
@@ -6937,6 +7284,11 @@ save_as_draft:
             );
           }
 
+
+          if (data.campaign_id) {
+            await loadCampaignOptions(data.campaign_id);
+            resultBox.textContent += "\\nCampaign: " + data.campaign_title;
+          }
 
           pushMessage.value =
             "";
