@@ -3544,6 +3544,7 @@ async function ensureScheduledPushTable(env) {
     ON scheduled_push_notifications
     (status, scheduled_at)
   `).run();
+  await ensureNotificationCampaignCycles(env);
 }
 
 // Campaign grouping does not change when or how individual schedules are delivered.
@@ -3574,7 +3575,8 @@ async function notificationCampaignBatch(env, statements) {
 
 async function listNotificationCampaigns(env) {
   const rows = await env.DB.prepare(`
-    SELECT c.id, c.title, c.created_at,
+    SELECT c.id, c.title, c.created_at, c.first_schedule_id, c.cycle_anchor_at,
+      c.repeat_type, c.wait_repeat, c.timezone_offset_minutes, c.cycle_number,
       COUNT(s.id) AS child_count,
       SUM(CASE WHEN s.status = 'draft' THEN 1 ELSE 0 END) AS draft_count,
       CASE
@@ -3593,68 +3595,364 @@ async function listNotificationCampaigns(env) {
 
 async function requireNotificationCampaign(env, id) {
   const campaign = await env.DB.prepare(`
-    SELECT id, title FROM push_notification_campaigns WHERE id = ?
+    SELECT id, title, first_schedule_id, cycle_anchor_at, repeat_type, wait_repeat, timezone_offset_minutes, cycle_number
+    FROM push_notification_campaigns WHERE id = ?
   `).bind(cleanText(id, "")).first();
   if (!campaign) throw notificationCampaignError("Campaign nahi mila. List dobara kholein.", 404);
   return campaign;
 }
 
+// v45: one repeat cycle per campaign; standalone schedules keep their own repeat behavior.
+async function ensureNotificationCampaignCycles(env) {
+  async function addColumns(table, columns) {
+    const info = await env.DB.prepare('PRAGMA table_info(' + table + ')').all();
+    const names = new Set((info.results || []).map(c => c.name));
+    for (const [name, definition] of columns) {
+      if (names.has(name)) continue;
+      try { await env.DB.prepare('ALTER TABLE ' + table + ' ADD COLUMN ' + name + ' ' + definition).run(); }
+      catch (e) { if (!/duplicate column name/i.test(String(e.message))) throw e; }
+    }
+  }
+  await addColumns('push_notification_campaigns', [
+    ['first_schedule_id', 'INTEGER'], ['cycle_anchor_at', 'TEXT'],
+    ['repeat_type', "TEXT NOT NULL DEFAULT 'no_repeat'"], ['wait_repeat', 'INTEGER NOT NULL DEFAULT 0'],
+    ['timezone_offset_minutes', 'INTEGER NOT NULL DEFAULT 0'], ['cycle_number', 'INTEGER NOT NULL DEFAULT 0'],
+    ['lock_token', 'TEXT'], ['locked_at', 'TEXT']
+  ]);
+  await addColumns('scheduled_push_notifications', [
+    ['campaign_offset_ms', 'INTEGER'], ['campaign_active', 'INTEGER NOT NULL DEFAULT 0']
+  ]);
+  // Upgrade existing v44 groups without deleting or re-sending any notification.
+  await env.DB.prepare(`
+    UPDATE push_notification_campaigns SET
+      first_schedule_id = (SELECT MIN(id) FROM scheduled_push_notifications WHERE campaign_id = push_notification_campaigns.id),
+      cycle_anchor_at = (SELECT scheduled_at FROM scheduled_push_notifications WHERE campaign_id = push_notification_campaigns.id ORDER BY id LIMIT 1),
+      repeat_type = COALESCE((SELECT repeat_type FROM scheduled_push_notifications WHERE campaign_id = push_notification_campaigns.id ORDER BY id LIMIT 1), 'no_repeat'),
+      wait_repeat = COALESCE((SELECT wait_repeat FROM scheduled_push_notifications WHERE campaign_id = push_notification_campaigns.id ORDER BY id LIMIT 1), 0),
+      timezone_offset_minutes = COALESCE((SELECT timezone_offset_minutes FROM scheduled_push_notifications WHERE campaign_id = push_notification_campaigns.id ORDER BY id LIMIT 1), 0)
+    WHERE cycle_anchor_at IS NULL
+  `).run();
+  await env.DB.prepare(`
+    UPDATE scheduled_push_notifications SET
+      campaign_offset_ms = CAST(ROUND((julianday(scheduled_at) - julianday(
+        (SELECT cycle_anchor_at FROM push_notification_campaigns WHERE id = campaign_id))) * 86400000) AS INTEGER),
+      campaign_active = CASE WHEN status = 'draft' THEN 0 ELSE 1 END,
+      repeat_type = (SELECT repeat_type FROM push_notification_campaigns WHERE id = campaign_id),
+      wait_repeat = (SELECT wait_repeat FROM push_notification_campaigns WHERE id = campaign_id)
+    WHERE campaign_id IS NOT NULL AND campaign_offset_ms IS NULL
+      AND EXISTS (SELECT 1 FROM push_notification_campaigns WHERE id = campaign_id AND cycle_anchor_at IS NOT NULL)
+  `).run();
+}
+
+async function loadNotificationCampaign(env, id) {
+  const campaign = await env.DB.prepare('SELECT * FROM push_notification_campaigns WHERE id = ?').bind(id).first();
+  if (!campaign) throw notificationCampaignError('Campaign nahi mila. List dobara kholein.', 404);
+  const result = await env.DB.prepare('SELECT * FROM scheduled_push_notifications WHERE campaign_id = ? ORDER BY id').bind(id).all();
+  const children = result.results || [];
+  return {campaign, children, first: children.find(s => s.id === campaign.first_schedule_id) || null};
+}
+
+async function withNotificationCampaignLock(env, id, callback, skipBusy = false) {
+  const token = crypto.randomUUID(), now = new Date().toISOString();
+  const claim = await env.DB.prepare(`UPDATE push_notification_campaigns SET lock_token = ?, locked_at = ?
+    WHERE id = ? AND (lock_token IS NULL OR locked_at < ?)`)
+    .bind(token, now, id, new Date(Date.now() - 600000).toISOString()).run();
+  if (Number(claim.meta.changes) !== 1) {
+    if (skipBusy) return;
+    await requireNotificationCampaign(env, id);
+    throw notificationCampaignError('Campaign par kaam chal raha hai. Thori der mein dobara koshish karein.', 409);
+  }
+  try { return await callback(token); }
+  finally {await env.DB.prepare('UPDATE push_notification_campaigns SET lock_token = NULL, locked_at = NULL WHERE id = ? AND lock_token = ?').bind(id, token).run();}
+}
+
+function campaignDateError() {
+  return notificationCampaignError('Child ki date/time pehli notification ke BAAD rakhein; barabar ya pehle nahi.');
+}
+
+async function handleCampaignScheduleAction(request, env, body, action, stored) {
+  return withNotificationCampaignLock(env, stored.campaign_id, async token => {
+    const model = await loadNotificationCampaign(env, stored.campaign_id);
+    const row = model.children.find(s => s.id === stored.id);
+    if (!row) throw notificationCampaignError('Notification nahi mili.', 404);
+    const c = model.campaign, isFirst = row.id === c.first_schedule_id;
+    const now = new Date().toISOString();
+
+    if (action === 'copy_schedule') {
+      const result = await env.DB.prepare(`INSERT INTO scheduled_push_notifications
+        (title,message,target_url,link_text,scheduled_at,status,attempts,created_at,repeat_type,updated_at,
+         timezone_offset_minutes,link_data,wait_repeat,campaign_id,campaign_offset_ms,campaign_active)
+        SELECT title,message,target_url,link_text,scheduled_at,'draft',0,?, ?,?, ?,link_data,?,campaign_id,campaign_offset_ms,0
+        FROM scheduled_push_notifications WHERE id = ? AND EXISTS
+          (SELECT 1 FROM push_notification_campaigns WHERE id = ? AND lock_token = ?)`)
+        .bind(now,c.repeat_type,now,c.timezone_offset_minutes,c.wait_repeat,row.id,c.id,token).run();
+      if (!result.meta.changes) throw notificationCampaignError('Campaign delete ho chuka hai.',404);
+      return jsonResponse({success:true,event:'schedule_copied',schedule_id:result.meta.last_row_id,status:'draft'},201);
+    }
+
+    if (action === 'delete_schedule') {
+      const statements = [env.DB.prepare('DELETE FROM scheduled_push_notifications WHERE id = ? AND campaign_id = ?').bind(row.id,c.id)];
+      if (isFirst) {
+        const remaining = model.children.filter(s => s.id !== row.id).sort((a,b) => Date.parse(a.scheduled_at)-Date.parse(b.scheduled_at) || a.id-b.id);
+        const next = remaining[0];
+        statements.push(env.DB.prepare('UPDATE push_notification_campaigns SET first_schedule_id = ?, cycle_anchor_at = ? WHERE id = ? AND lock_token = ?')
+          .bind(next ? next.id : null,next ? next.scheduled_at : null,c.id,token));
+        if (next) statements.push(env.DB.prepare(`UPDATE scheduled_push_notifications SET campaign_offset_ms =
+          CAST(ROUND((julianday(scheduled_at)-julianday(?))*86400000) AS INTEGER) WHERE campaign_id = ?`).bind(next.scheduled_at,c.id));
+      }
+      const result = await env.DB.batch(statements);
+      return jsonResponse({success:true,event:'schedule_deleted',schedule_id:row.id,deleted:Number(result[0].meta.changes)===1});
+    }
+
+    if (action === 'send_schedule_now') {
+      // Serialize this explicit send with the campaign cron; a draft sent manually stays out of recurring cycles.
+      return handlePushAdminPageCore(new Request(request.url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),env,true);
+    }
+
+    const date = new Date(cleanText(body.schedule_at));
+    const draft = body.save_as_draft === true;
+    const dateChanged = date.getTime() !== Date.parse(row.scheduled_at);
+    const goingLive = row.status === 'draft' && !draft;
+    if (!Number.isFinite(date.getTime()) || (!draft && (dateChanged || goingLive) && date.getTime() <= Date.now()+15000)) {
+      throw notificationCampaignError('Nayi date aur time future mein select karein.');
+    }
+    const title = cleanText(body.title,'Imdade Rohani').slice(0,120), message = cleanText(body.message).slice(0,500);
+    if (!message) throw notificationCampaignError('Notification message khali nahi ho sakta.');
+    if (!isFirst && date.getTime() <= Date.parse(c.cycle_anchor_at)) throw campaignDateError();
+    if (!isFirst && goingLive && (!model.first || !model.first.campaign_active)) {
+      throw notificationCampaignError('Pehle main notification khol kar LIVE CAMPAIGN karein.');
+    }
+    if (isFirst && !draft) {
+      const invalid = model.children.find(s => s.id !== row.id && (goingLive || s.campaign_active) && !(Number(s.campaign_offset_ms)>0));
+      if (invalid) throw notificationCampaignError('Child "'+invalid.title+'" ki date pehli notification ke baad set karein, phir Campaign LIVE karein.');
+    }
+    const repeat = isFirst ? normalizeRepeatType(body.repeat_type) : c.repeat_type;
+    const wait = isFirst ? (repeat === 'no_repeat' ? 0 : normalizeWaitRepeat(body.wait_repeat)) : c.wait_repeat;
+    const tz = isFirst ? Number(body.timezone_offset_minutes || 0) : c.timezone_offset_minutes;
+    const links = Array.isArray(body.links) ? body.links.slice(0,3).map(l => ({url:cleanText(l&&l.url),text:cleanText(l&&l.text).slice(0,40)})).filter(l=>l.url&&l.text) : [];
+    let url = '', linkText = '';
+    if (links.length === 1) {url=links[0].url;linkText=links[0].text;}
+    else if (links.length > 1) {const page=await createNotificationOptionPage(env,links);url=SITE_ORIGIN+'/'+page.slug;linkText='Options Dekhein';}
+    const statements = [];
+    if (isFirst) {
+      statements.push(env.DB.prepare(`UPDATE push_notification_campaigns SET cycle_anchor_at=?,repeat_type=?,wait_repeat=?,timezone_offset_minutes=?
+        WHERE id=? AND lock_token=?`).bind(date.toISOString(),repeat,wait,tz,c.id,token));
+      statements.push(env.DB.prepare(`UPDATE scheduled_push_notifications SET
+        scheduled_at = strftime('%Y-%m-%dT%H:%M:%fZ', (? + campaign_offset_ms) / 1000.0, 'unixepoch'),
+        repeat_type=?,wait_repeat=?,timezone_offset_minutes=?,updated_at=?,
+        status=CASE WHEN ? THEN 'draft' WHEN ? THEN 'pending' WHEN ? AND campaign_active=1 THEN 'pending' ELSE status END,
+        campaign_active=CASE WHEN ? THEN 0 WHEN ? THEN 1 ELSE campaign_active END,
+        attempts=CASE WHEN ? OR ? THEN 0 ELSE attempts END,
+        last_error=CASE WHEN ? OR ? THEN NULL ELSE last_error END
+        WHERE campaign_id=? AND EXISTS (SELECT 1 FROM push_notification_campaigns WHERE id=? AND lock_token=?)`)
+        .bind(date.getTime(),repeat,wait,tz,now,draft?1:0,goingLive?1:0,dateChanged?1:0,draft?1:0,goingLive?1:0,
+          dateChanged?1:0,goingLive?1:0,dateChanged?1:0,goingLive?1:0,c.id,c.id,token));
+    }
+    const status = draft ? 'draft' : (dateChanged || goingLive || row.status === 'failed' ? 'pending' : row.status);
+    statements.push(env.DB.prepare(`UPDATE scheduled_push_notifications SET title=?,message=?,target_url=?,link_text=?,link_data=?,
+      scheduled_at=?,repeat_type=?,wait_repeat=?,timezone_offset_minutes=?,status=?,campaign_active=?,campaign_offset_ms=?,
+      attempts=0,last_error=NULL,processing_at=NULL,updated_at=? WHERE id=? AND campaign_id=?
+      AND EXISTS(SELECT 1 FROM push_notification_campaigns WHERE id=? AND lock_token=?)`)
+      .bind(title,message,url,linkText,JSON.stringify(links),date.toISOString(),repeat,wait,tz,status,draft?0:1,
+        isFirst?0:date.getTime()-Date.parse(c.cycle_anchor_at),now,row.id,c.id,c.id,token));
+    const result = await env.DB.batch(statements);
+    if (!result[result.length-1].meta.changes) throw notificationCampaignError('Campaign delete ho chuka hai.',404);
+    return jsonResponse({success:true,event:'schedule_updated',schedule_id:row.id,updated:true,status,repeat_type:repeat,wait_repeat:wait,
+      scheduled_at:date.toISOString(),campaign_live: isFirst && goingLive});
+  });
+}
+
+function nextNotificationCampaignAnchor(campaign, children) {
+  const active = children.filter(s => s.campaign_active);
+  if (!active.length || campaign.repeat_type === 'no_repeat') return null;
+  const offset = Number(campaign.timezone_offset_minutes || 0)*60000;
+  const firstLocal = new Date(Date.parse(campaign.cycle_anchor_at)-offset);
+  const lastLocal = new Date(Math.max(...active.map(s=>Date.parse(s.scheduled_at)))-offset);
+  if (campaign.repeat_type === 'hourly') {
+    lastLocal.setUTCMinutes(firstLocal.getUTCMinutes(),firstLocal.getUTCSeconds(),firstLocal.getUTCMilliseconds());
+  } else {
+    lastLocal.setUTCHours(firstLocal.getUTCHours(),firstLocal.getUTCMinutes(),firstLocal.getUTCSeconds(),firstLocal.getUTCMilliseconds());
+  }
+  // Repeat/Wait Repeat starts after the final scheduled day, retaining first clock time and every child offset.
+  return getNextRecurringDate(new Date(lastLocal.getTime()+offset).toISOString(),campaign.repeat_type,campaign.timezone_offset_minutes,campaign.wait_repeat);
+}
+
+async function advanceNotificationCampaign(env, model, token) {
+  const active = model.children.filter(s=>s.campaign_active);
+  if (!active.length || active.some(s=>s.status!=='sent')) return;
+  const next = nextNotificationCampaignAnchor(model.campaign,model.children);
+  if (!next) return;
+  const c = model.campaign, now = new Date().toISOString();
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE scheduled_push_notifications SET
+      scheduled_at=strftime('%Y-%m-%dT%H:%M:%fZ', (? + campaign_offset_ms)/1000.0,'unixepoch'),
+      status=CASE WHEN campaign_active=1 THEN 'pending' ELSE status END,
+      attempts=0,last_error=NULL,processing_at=NULL,updated_at=?
+      WHERE campaign_id=?
+        AND EXISTS(SELECT 1 FROM push_notification_campaigns WHERE id=? AND lock_token=?)`)
+      .bind(Date.parse(next),now,c.id,c.id,token),
+    env.DB.prepare(`UPDATE push_notification_campaigns SET cycle_anchor_at=?,cycle_number=cycle_number+1
+      WHERE id=? AND lock_token=?`).bind(next,c.id,token)
+  ]);
+}
+
+async function runDueNotificationCampaigns(env) {
+  const groups = await env.DB.prepare(`SELECT c.id FROM push_notification_campaigns c
+    JOIN scheduled_push_notifications s ON s.campaign_id=c.id AND s.campaign_active=1
+    GROUP BY c.id HAVING MIN(CASE WHEN s.status IN ('pending','processing') THEN s.scheduled_at END) <= ?
+      OR (SUM(CASE WHEN s.status!='sent' THEN 1 ELSE 0 END)=0 AND c.repeat_type!='no_repeat')
+    ORDER BY MIN(s.scheduled_at),c.id LIMIT 10`).bind(new Date().toISOString()).all();
+  let budget = 10;
+  for (const group of groups.results || []) {
+    if (budget <= 0) break;
+    try {
+      await withNotificationCampaignLock(env,group.id,async token => {
+        await env.DB.prepare(`UPDATE scheduled_push_notifications SET
+          status=CASE WHEN attempts>=3 THEN 'failed' ELSE 'pending' END,processing_at=NULL
+          WHERE campaign_id=? AND status='processing' AND processing_at < ?`)
+          .bind(group.id,new Date(Date.now()-600000).toISOString()).run();
+        let model = await loadNotificationCampaign(env,group.id);
+        const active = model.children.filter(s=>s.campaign_active).sort((a,b)=>Date.parse(a.scheduled_at)-Date.parse(b.scheduled_at)||a.id-b.id);
+        const invalid = active.find(s=>s.id!==model.campaign.first_schedule_id && !(Number(s.campaign_offset_ms)>0));
+        if (invalid || !model.first || !model.first.campaign_active) {
+          if (invalid) await env.DB.prepare(`UPDATE scheduled_push_notifications SET last_error=? WHERE id=?`)
+            .bind('Child ki date/time pehli notification ke BAAD set karein.',invalid.id).run();
+          return;
+        }
+        for (const item of active) {
+          if (item.status==='sent') continue;
+          if (budget<=0 || item.status!=='pending' || Date.parse(item.scheduled_at)>Date.now()) break;
+          const now=new Date().toISOString();
+          const claim=await env.DB.prepare(`UPDATE scheduled_push_notifications SET status='processing',processing_at=?,attempts=attempts+1
+            WHERE id=? AND status='pending' AND scheduled_at=? AND attempts<3
+              AND EXISTS(SELECT 1 FROM push_notification_campaigns WHERE id=? AND lock_token=?)`)
+            .bind(now,item.id,item.scheduled_at,group.id,token).run();
+          if (!claim.meta.changes) break;
+          budget--;
+          try {
+            const url=new URL(SITE_ORIGIN+'/api/push/broadcast');
+            for (const [k,v] of Object.entries({key:env.PWA_ADMIN_KEY,title:item.title,body:item.message,url:item.target_url||'',link_text:item.link_text||''})) url.searchParams.set(k,String(v));
+            const response=await handlePushBroadcast(new Request(url.toString()),env,'schedule:'+item.id+':'+item.scheduled_at);
+            const result=await response.json();
+            if (!response.ok || !result.success) throw new Error(result.error||result.message||'Scheduled broadcast failed.');
+            await env.DB.prepare(`UPDATE scheduled_push_notifications SET status='sent',sent_at=?,processing_at=NULL,last_error=NULL,updated_at=?
+              WHERE id=? AND scheduled_at=? AND status='processing'`).bind(new Date().toISOString(),new Date().toISOString(),item.id,item.scheduled_at).run();
+          } catch(error) {
+            await env.DB.prepare(`UPDATE scheduled_push_notifications SET status=?,processing_at=NULL,last_error=? WHERE id=? AND scheduled_at=?`)
+              .bind(Number(item.attempts||0)+1>=3?'failed':'pending',String(error.message||error).slice(0,500),item.id,item.scheduled_at).run();
+            break; // Later children wait for the failed earlier message.
+          }
+        }
+        // Re-read after delivery: deletion must never recreate a campaign or its children.
+        if (await env.DB.prepare('SELECT id FROM push_notification_campaigns WHERE id=? AND lock_token=?').bind(group.id,token).first()) {
+          model=await loadNotificationCampaign(env,group.id);
+          await advanceNotificationCampaign(env,model,token);
+        }
+      },true);
+    } catch(error) {console.log('Campaign schedule failed:',group.id,String(error.message||error));}
+  }
+}
+
+
+async function saveScheduledPush(env, data) {
+  if (data.campaign_enabled !== true) return saveScheduledPushLegacy(env,data);
+  if (!env.DB) throw new Error('D1 database binding DB is missing.');
+  await ensureScheduledPushTable(env);
+  const existingId = cleanText(data.campaign_id);
+  async function save(token) {
+    const model = existingId ? await loadNotificationCampaign(env,existingId) : null;
+    const name = model ? {title:model.campaign.title} : notificationCampaignName(data.title);
+    const id = existingId || crypto.randomUUID(), now=new Date().toISOString();
+    const date = new Date(data.scheduled_at);
+    if (!Number.isFinite(date.getTime())) throw notificationCampaignError('Date/time durust nahi hai.');
+    const first = model && model.first;
+    if (first && date.getTime() <= Date.parse(model.campaign.cycle_anchor_at)) throw campaignDateError();
+    if (first && data.status!=='draft' && !first.campaign_active) {
+      throw notificationCampaignError('Pehle main notification ko LIVE karein, ya child ko Save Draft karein.');
+    }
+    const repeat=first?model.campaign.repeat_type:normalizeRepeatType(data.repeat_type);
+    const wait=first?model.campaign.wait_repeat:(repeat==='no_repeat'?0:normalizeWaitRepeat(data.wait_repeat));
+    const tz=first?model.campaign.timezone_offset_minutes:Number(data.timezone_offset_minutes||0);
+    const offset=first?date.getTime()-Date.parse(model.campaign.cycle_anchor_at):0;
+    const statements=[];
+    if (!model) statements.push(env.DB.prepare(`INSERT INTO push_notification_campaigns
+      (id,title,name_key,created_at,cycle_anchor_at,repeat_type,wait_repeat,timezone_offset_minutes)
+      VALUES(?,?,?,?,?,?,?,?)`).bind(id,name.title,name.key,now,date.toISOString(),repeat,wait,tz));
+    statements.push(env.DB.prepare(`INSERT INTO scheduled_push_notifications
+      (title,message,target_url,link_text,scheduled_at,status,attempts,created_at,repeat_type,updated_at,
+       timezone_offset_minutes,link_data,wait_repeat,campaign_id,campaign_offset_ms,campaign_active)
+      SELECT ?,?,?,?,?,?,0,?,?,?,?,?,?,?,?,?
+      WHERE EXISTS(SELECT 1 FROM push_notification_campaigns WHERE id=?)`)
+      .bind(data.title,data.message,data.url||'',data.link_text||'',date.toISOString(),data.status==='draft'?'draft':'pending',
+        now,repeat,now,tz,JSON.stringify(Array.isArray(data.links)?data.links.slice(0,3):[]),wait,id,offset,data.status==='draft'?0:1,id));
+    const insertIndex=statements.length-1;
+    if (!first) statements.push(env.DB.prepare(`UPDATE push_notification_campaigns SET
+      first_schedule_id=(SELECT MIN(id) FROM scheduled_push_notifications WHERE campaign_id=?),
+      cycle_anchor_at=?,repeat_type=?,wait_repeat=?,timezone_offset_minutes=? WHERE id=?`)
+      .bind(id,date.toISOString(),repeat,wait,tz,id));
+    const results=await notificationCampaignBatch(env,statements);
+    if (!results[insertIndex].meta.changes) throw notificationCampaignError('Campaign delete ho chuka hai.',404);
+    return {id:results[insertIndex].meta.last_row_id,scheduled_at:date.toISOString(),campaign_id:id,campaign_title:name.title};
+  }
+  return existingId ? withNotificationCampaignLock(env,existingId,save) : save();
+}
+
 async function handleNotificationCampaignAction(env, body, action) {
   if (!env.DB) return databaseMissingResponse();
   await ensureScheduledPushTable(env);
-
-  if (action === "list_campaigns") {
-    return jsonResponse({success: true, campaigns: await listNotificationCampaigns(env)});
-  }
-
-  const campaign = await requireNotificationCampaign(env, body.campaign_id);
-
-  if (action === "list_campaign_children") {
-    // Keyset pagination makes every child accessible, including campaigns over 200 items.
-    const after = Number(body.after_id || 0);
-    if (!Number.isSafeInteger(after) || after < 0) {
-      throw notificationCampaignError("Page ki ID durust nahi hai.");
-    }
-    const rows = await env.DB.prepare(`
-      SELECT * FROM scheduled_push_notifications
-      WHERE campaign_id = ? AND id > ? ORDER BY id ASC LIMIT 101
-    `).bind(campaign.id, after).all();
-    const schedules = (rows.results || []).slice(0, 100);
-    return jsonResponse({success: true, campaign, schedules,
-      next_cursor: (rows.results || []).length > 100 ? schedules[schedules.length - 1].id : null});
-  }
-
-  if (action === "copy_campaign") {
-    const name = notificationCampaignName(body.name);
-    const newId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    // One D1 transaction: name conflict or an insertion failure leaves no partial copy.
-    const results = await notificationCampaignBatch(env, [
-      env.DB.prepare(`
-        INSERT INTO push_notification_campaigns (id, title, name_key, created_at)
-        VALUES (?, ?, ?, ?)
-      `).bind(newId, name.title, name.key, now),
-      env.DB.prepare(`
-        INSERT INTO scheduled_push_notifications (
-          title, message, target_url, link_text, scheduled_at, status, attempts,
-          last_error, created_at, processing_at, sent_at, repeat_type, updated_at,
-          timezone_offset_minutes, link_data, wait_repeat, campaign_id
-        )
-        SELECT
-          CASE WHEN id = (SELECT MIN(id) FROM scheduled_push_notifications WHERE campaign_id = ?)
-            THEN ? ELSE title END,
-          message, target_url, link_text, scheduled_at, 'draft', 0,
-          NULL, ?, NULL, NULL, repeat_type, ?, timezone_offset_minutes, link_data, wait_repeat, ?
-        FROM scheduled_push_notifications WHERE campaign_id = ? ORDER BY id ASC
-      `).bind(campaign.id, name.title, now, now, newId, campaign.id)
+  if (action==='list_campaigns') return jsonResponse({success:true,campaigns:await listNotificationCampaigns(env)});
+  const campaign=await requireNotificationCampaign(env,body.campaign_id);
+  if (action==='delete_campaign') {
+    // Explicitly scoped, atomic removal. A running cron cannot recreate the deleted group.
+    const result=await env.DB.batch([
+      env.DB.prepare('DELETE FROM scheduled_push_notifications WHERE campaign_id=?').bind(campaign.id),
+      env.DB.prepare('DELETE FROM push_notification_campaigns WHERE id=?').bind(campaign.id)
     ]);
-    return jsonResponse({success: true, event: "campaign_copied", campaign_id: newId,
-      campaign_title: name.title, child_count: Number(results[1].meta.changes || 0), status: "draft"}, 201);
+    return jsonResponse({success:true,event:'campaign_deleted',campaign_id:campaign.id,deleted:result[1].meta.changes===1,
+      deleted_children:Number(result[0].meta.changes)});
   }
-  throw notificationCampaignError("Campaign action durust nahi hai.");
+  if (action==='list_campaign_children') {
+    const after=Number(body.after_id||0);
+    if (!Number.isSafeInteger(after)||after<0) throw notificationCampaignError('Page ki ID durust nahi hai.');
+    const rows=await env.DB.prepare(`SELECT * FROM scheduled_push_notifications WHERE campaign_id=?
+      AND id!=COALESCE(?,0) AND id>? ORDER BY id LIMIT 101`).bind(campaign.id,campaign.first_schedule_id,after).all();
+    const children=rows.results||[], schedules=children.slice(0,100);
+    if (!after && campaign.first_schedule_id) {
+      const first=await env.DB.prepare('SELECT * FROM scheduled_push_notifications WHERE id=? AND campaign_id=?').bind(campaign.first_schedule_id,campaign.id).first();
+      if (first) schedules.unshift(first);
+    }
+    return jsonResponse({success:true,campaign,schedules,next_cursor:children.length>100?children[99].id:null});
+  }
+  if (action==='copy_campaign') {
+    return withNotificationCampaignLock(env,campaign.id,async token=>{
+      const name=notificationCampaignName(body.name), newId=crypto.randomUUID(),now=new Date().toISOString();
+      const results=await notificationCampaignBatch(env,[
+        env.DB.prepare(`INSERT INTO push_notification_campaigns
+          (id,title,name_key,created_at,cycle_anchor_at,repeat_type,wait_repeat,timezone_offset_minutes)
+          SELECT ?,?,?,?,cycle_anchor_at,repeat_type,wait_repeat,timezone_offset_minutes
+          FROM push_notification_campaigns WHERE id=? AND lock_token=?`).bind(newId,name.title,name.key,now,campaign.id,token),
+        env.DB.prepare(`INSERT INTO scheduled_push_notifications
+          (title,message,target_url,link_text,scheduled_at,status,attempts,created_at,repeat_type,updated_at,
+           timezone_offset_minutes,link_data,wait_repeat,campaign_id,campaign_offset_ms,campaign_active)
+          SELECT CASE WHEN s.id=c.first_schedule_id THEN ? ELSE s.title END,
+            s.message,s.target_url,s.link_text,s.scheduled_at,'draft',0,?,c.repeat_type,?,c.timezone_offset_minutes,
+            s.link_data,c.wait_repeat,?,s.campaign_offset_ms,0
+          FROM scheduled_push_notifications s JOIN push_notification_campaigns c ON c.id=s.campaign_id
+          WHERE c.id=? AND c.lock_token=? ORDER BY CASE WHEN s.id=c.first_schedule_id THEN 0 ELSE 1 END,s.id`)
+          .bind(name.title,now,now,newId,campaign.id,token),
+        env.DB.prepare(`UPDATE push_notification_campaigns SET first_schedule_id=
+          (SELECT MIN(id) FROM scheduled_push_notifications WHERE campaign_id=?) WHERE id=?`).bind(newId,newId)
+      ]);
+      if (!results[0].meta.changes) throw notificationCampaignError('Campaign delete ho chuka hai.',404);
+      return jsonResponse({success:true,event:'campaign_copied',campaign_id:newId,campaign_title:name.title,
+        child_count:Number(results[1].meta.changes),status:'draft'},201);
+    });
+  }
+  throw notificationCampaignError('Campaign action durust nahi hai.');
 }
 
-async function saveScheduledPush(env, data) {
+
+async function saveScheduledPushLegacy(env, data) {
   if (!env.DB) throw new Error("D1 DB scheduled notification ke liye available nahi hai.");
   await ensureScheduledPushTable(env);
   const now = new Date().toISOString();
@@ -3877,7 +4175,7 @@ async function runDueScheduledPushes(env) {
   await env.DB.prepare(`
     UPDATE scheduled_push_notifications
     SET status = 'pending', processing_at = NULL
-    WHERE status = 'processing'
+    WHERE campaign_id IS NULL AND status = 'processing'
       AND processing_at < ?
       AND attempts < 3
   `)
@@ -3898,7 +4196,7 @@ async function runDueScheduledPushes(env) {
         timezone_offset_minutes,
         wait_repeat
       FROM scheduled_push_notifications
-      WHERE status = 'pending'
+      WHERE campaign_id IS NULL AND status = 'pending'
         AND scheduled_at <= ?
         AND attempts < 3
       ORDER BY scheduled_at ASC
@@ -4077,11 +4375,13 @@ async function runDueScheduledPushes(env) {
       );
     }
   }
+  await runDueNotificationCampaigns(env);
 }
 
 async function handlePushAdminPageCore(
   request,
-  env
+  env,
+  campaignLockHeld = false
 ) {
 
   /*
@@ -4129,8 +4429,17 @@ async function handlePushAdminPageCore(
         "send_or_schedule"
       );
 
-    if (["list_campaigns", "list_campaign_children", "copy_campaign"].includes(adminAction)) {
+    if (["list_campaigns", "list_campaign_children", "copy_campaign", "delete_campaign"].includes(adminAction)) {
       return handleNotificationCampaignAction(env, body, adminAction);
+    }
+
+    if (!campaignLockHeld && ["update_schedule", "delete_schedule", "copy_schedule", "send_schedule_now"].includes(adminAction) && env.DB) {
+      await ensureScheduledPushTable(env);
+      const id = Number(body.schedule_id);
+      if (Number.isSafeInteger(id) && id > 0) {
+        const stored = await env.DB.prepare('SELECT * FROM scheduled_push_notifications WHERE id=?').bind(id).first();
+        if (stored && stored.campaign_id) return handleCampaignScheduleAction(request,env,body,adminAction,stored);
+      }
     }
 
     if (
@@ -5454,6 +5763,12 @@ textarea{
   #campaignList .item-actions button{padding:10px 5px;font-size:12px;}
 }
 
+
+.campaign-head-actions{display:flex;direction:ltr;align-items:center;gap:10px;flex-shrink:0;}
+#campaignDeleteAll{border:0;background:transparent;color:#b42318;font-size:13px;font-weight:700;cursor:pointer;padding:6px 0;white-space:nowrap;}
+#campaignDeleteAll:disabled{opacity:.5;cursor:wait;}
+#campaignModal .modal-head{gap:8px;}
+#campaignModal .modal-head h2{font-size:19px;}
 </style>
 
 </head>
@@ -5716,7 +6031,10 @@ textarea{
   <div class="modal-card">
     <div class="modal-head">
       <h2 id="campaignModalTitle"></h2>
-      <button class="modal-close" id="campaignClose" type="button" aria-label="Close Campaign">×</button>
+      <div class="campaign-head-actions">
+        <button class="modal-close" id="campaignClose" type="button" aria-label="Back from Campaign">×</button>
+        <button id="campaignDeleteAll" type="button">Delete All</button>
+      </div>
     </div>
     <button class="campaign-back" id="campaignBack" type="button" hidden>← Campaign notifications</button>
     <div id="campaignList"></div>
@@ -6079,6 +6397,8 @@ var pushLinkCount = 0;
 
   function renderScheduleEditor(schedules, editorTarget) {
     editorTarget = editorTarget || scheduleList;
+    if (editorTarget === campaignList) campaignEditorOpen = true;
+    else scheduleEditorOpen = true;
     editorTarget.innerHTML = "";
 
     if (!schedules.length) {
@@ -6093,6 +6413,13 @@ var pushLinkCount = 0;
 
     schedules.forEach(
       function(schedule){
+        var isCampaignSchedule = Boolean(schedule.campaign_id && activeCampaign);
+        var isCampaignFirst = isCampaignSchedule && schedule.id === activeCampaign.first_schedule_id;
+        var isCampaignChild = isCampaignSchedule && !isCampaignFirst;
+        if (isCampaignSchedule) {
+          schedule.repeat_type = activeCampaign.repeat_type;
+          schedule.wait_repeat = activeCampaign.wait_repeat;
+        }
         var item =
           document.createElement("div");
         item.className = "schedule-item";
@@ -6105,7 +6432,7 @@ var pushLinkCount = 0;
           "Schedule #" +
           String(schedule.id) +
           " — " +
-          String(schedule.status || "pending");
+          String(schedule.status || "pending") + (isCampaignFirst ? " · Main Campaign" : "");
         item.appendChild(heading);
 
         var titleInput =
@@ -6269,6 +6596,9 @@ var pushLinkCount = 0;
           toLocalInputValue(
             schedule.scheduled_at
           );
+        if (isCampaignChild) {
+          dateInput.min = toLocalInputValue(new Date(Math.floor(Date.parse(activeCampaign.cycle_anchor_at)/60000)*60000+60000).toISOString());
+        }
         item.appendChild(
           makeField(
             "📅 Next Date aur Time",
@@ -6297,7 +6627,8 @@ var pushLinkCount = 0;
 
         function syncItemWaitRepeat() {
           var disabled =
-            itemRepeat.value === "no_repeat";
+            isCampaignChild || itemRepeat.value === "no_repeat";
+          itemRepeat.disabled = isCampaignChild;
           itemWaitRepeat.select.disabled = disabled;
           itemWaitRepeat.input.disabled = disabled;
         }
@@ -6307,6 +6638,14 @@ var pushLinkCount = 0;
           syncItemWaitRepeat
         );
         syncItemWaitRepeat();
+        if (isCampaignSchedule) {
+          var ruleNote = document.createElement("p");
+          ruleNote.className = "campaign-help";
+          ruleNote.textContent = isCampaignFirst
+            ? "Main Campaign: Repeat aur Wait Repeat poore campaign par lagenge. Date/time badalne par children ka fasla barqarar rahega."
+            : "Child ki date/time pehli notification ke baad rakhein. Repeat aur Wait Repeat main notification se chalenge.";
+          item.appendChild(ruleNote);
+        }
 
         var actions =
           document.createElement("div");
@@ -6341,6 +6680,7 @@ var pushLinkCount = 0;
               !Number.isFinite(selected.getTime()) ||
               (
                 schedule.status !== "draft" &&
+                !(isCampaignSchedule && selected.getTime() === Date.parse(schedule.scheduled_at)) &&
                 selected.getTime() <= Date.now() + 15000
               )
             ) {
@@ -6350,6 +6690,10 @@ var pushLinkCount = 0;
               return;
             }
 
+            if (isCampaignChild && selected.getTime() <= Date.parse(activeCampaign.cycle_anchor_at)) {
+              window.alert("Child ki date/time pehli notification ke BAAD rakhein.");
+              return;
+            }
             updateButton.disabled = true;
             updateButton.textContent =
               "Updating...";
@@ -6469,8 +6813,7 @@ var pushLinkCount = 0;
           var liveButton =
             document.createElement("button");
           liveButton.type = "button";
-          liveButton.className = "item-live";
-          liveButton.textContent = "🔴 LIVE";
+          liveButton.className = "item-live";          liveButton.textContent = isCampaignFirst ? "🔴 LIVE CAMPAIGN" : "🔴 LIVE";
 
           liveButton.addEventListener(
             "click",
@@ -6505,7 +6848,7 @@ var pushLinkCount = 0;
                   save_as_draft: false
                   ,links: collectEditorLinks()
                 });
-                window.alert("Draft Live ho gaya; notification muqarrarah waqt par send hogi.");
+                window.alert(isCampaignFirst ? "Campaign LIVE ho gaya; sab notifications apne waqt par jayengi." : "Draft Live ho gaya; notification muqarrarah waqt par send hogi.");
                 await loadSchedules();
               } catch(error) {
                 window.alert(
@@ -6514,8 +6857,7 @@ var pushLinkCount = 0;
                     : String(error)
                 );
               } finally {
-                liveButton.disabled = false;
-                liveButton.textContent = "🔴 LIVE";
+                liveButton.disabled = false;                liveButton.textContent = isCampaignFirst ? "🔴 LIVE CAMPAIGN" : "🔴 LIVE";
               }
             }
           );
@@ -6526,6 +6868,56 @@ var pushLinkCount = 0;
       }
     );
   }
+
+  var scheduleEditorOpen = false;
+  var campaignEditorOpen = false;
+  var campaignDeleteBusy = false;
+  var mainOwnRepeat = null;
+
+  function backFromCampaign() {
+    if (campaignDeleteBusy) return;
+    if (campaignEditorOpen) loadCampaignChildren(false);
+    else closeCampaignPopup();
+  }
+
+  function syncCampaignMainFields() {
+    if (!campaignEnabled || !campaignSelect) return;
+    var selected = campaignEnabled.checked && knownCampaigns.find(function(c) {return c.id === campaignSelect.value;});
+    if (selected && selected.first_schedule_id) {
+      if (!mainOwnRepeat) mainOwnRepeat = {repeat:repeatType.value,wait:waitRepeat.value,custom:waitRepeatCustom.value};
+      repeatType.value = selected.repeat_type || "no_repeat";
+      var wait = Number(selected.wait_repeat || 0);
+      waitRepeat.value = wait <= 10 ? String(wait) : "custom";
+      waitRepeatCustom.value = String(wait);
+      syncMainWaitRepeat();
+      repeatType.disabled = true;
+      waitRepeat.disabled = true;
+      waitRepeatCustom.disabled = true;
+      scheduleDateTime.min = toLocalInputValue(new Date(Math.max(Date.now()+60000,Math.floor(Date.parse(selected.cycle_anchor_at)/60000)*60000+60000)).toISOString());
+    } else {
+      if (mainOwnRepeat) {
+        repeatType.value=mainOwnRepeat.repeat;waitRepeat.value=mainOwnRepeat.wait;waitRepeatCustom.value=mainOwnRepeat.custom;mainOwnRepeat=null;
+      }
+      repeatType.disabled=false;
+      syncMainWaitRepeat();
+      scheduleDateTime.min=toLocalInputValue(new Date(Date.now()+60000).toISOString());
+    }
+  }
+
+  document.getElementById("campaignSelect").addEventListener("change",syncCampaignMainFields);
+  document.getElementById("campaignDeleteAll").addEventListener("click",async function(){
+    if (!activeCampaign || campaignDeleteBusy) return;
+    var id=activeCampaign.id;
+    var button=document.getElementById("campaignDeleteAll");
+    campaignDeleteBusy=true;button.disabled=true;button.textContent="Deleting...";
+    try {
+      await adminScheduleRequest({action:"delete_campaign",key:adminKey.value.trim(),campaign_id:id});
+      campaignDeleteBusy=false;
+      closeCampaignPopup();
+      await loadSchedules();
+    } catch(error) {window.alert(error.message);}
+    finally {campaignDeleteBusy=false;button.disabled=false;button.textContent="Delete All";}
+  });
 
   var campaignEnabled = document.getElementById("campaignEnabled");
   var campaignSelect = document.getElementById("campaignSelect");
@@ -6563,6 +6955,7 @@ var pushLinkCount = 0;
       campaignSelect.add(new Option(campaign.title, campaign.id));
     });
     campaignSelect.value = campaigns.some(function(c) {return c.id === selected;}) ? selected : "";
+    syncCampaignMainFields();
   }
 
   async function loadCampaignOptions(selectedId) {
@@ -6590,6 +6983,7 @@ var pushLinkCount = 0;
     campaignSelect.disabled = !campaignEnabled.checked;
     if (campaignEnabled.checked) loadCampaignOptions();
     else { campaignOptionsVersion++; campaignSelect.value = ""; }
+    syncCampaignMainFields();
   });
   adminKey.addEventListener("input", function() {
     campaignOptionsVersion++;
@@ -6627,6 +7021,7 @@ var pushLinkCount = 0;
     var more = campaignList.querySelector(".campaign-more");
     if (more) more.remove();
     if (!append) {
+      campaignEditorOpen = false;
       campaignCursor = null;
       campaignBack.hidden = true;
       listMessage(campaignList, "Campaign notifications load ho rahi hain...");
@@ -6708,7 +7103,7 @@ var pushLinkCount = 0;
       await loadSchedules();
       openCampaignPopup({id: copied.campaign_id, title: copied.campaign_title});
       window.alert("Campaign copy ho gaya. Tamam " + copied.child_count +
-        " notifications Draft mein hain. Har child khol kar date check karein aur LIVE dabayein.");
+        " notifications Draft mein hain. Pehli notification ki date/time check karke LIVE CAMPAIGN dabayein.");
     } catch (error) {
       campaignCopyError.textContent = error.message;
     } finally {
@@ -6717,11 +7112,11 @@ var pushLinkCount = 0;
       campaignCopySave.textContent = "COPY CAMPAIGN";
     }
   });
-  document.getElementById("campaignClose").addEventListener("click", closeCampaignPopup);
+  document.getElementById("campaignClose").addEventListener("click", backFromCampaign);
   document.getElementById("campaignCopyClose").addEventListener("click", closeCampaignCopy);
   document.getElementById("campaignCopyCancel").addEventListener("click", closeCampaignCopy);
   campaignBack.addEventListener("click", function() {loadCampaignChildren(false);});
-  campaignModal.addEventListener("click", function(event) {if (event.target === campaignModal) closeCampaignPopup();});
+  campaignModal.addEventListener("click", function(event) {if (event.target === campaignModal) backFromCampaign();});
   campaignCopyModal.addEventListener("click", function(event) {if (event.target === campaignCopyModal) closeCampaignCopy();});
   document.addEventListener("keydown", function(event) {
     var top = campaignCopyModal.classList.contains("open") ? campaignCopyModal :
@@ -6729,7 +7124,7 @@ var pushLinkCount = 0;
     if (!top) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      if (top === campaignCopyModal) closeCampaignCopy(); else closeCampaignPopup();
+      if (top === campaignCopyModal) closeCampaignCopy(); else backFromCampaign();
     } else if (event.key === "Tab") {
       var focusable = Array.from(top.querySelectorAll("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)"))
         .filter(function(el) {return !el.hidden && el.getClientRects().length;});
@@ -6788,6 +7183,7 @@ var pushLinkCount = 0;
   }
 
   function renderScheduleList(schedules, campaigns) {
+    scheduleEditorOpen = false;
     scheduleList.replaceChildren();
     modalTitle.textContent = "📋 Scheduled Notifications";
     campaigns.forEach(function(campaign) {
@@ -6846,7 +7242,8 @@ var pushLinkCount = 0;
   modalClose.addEventListener(
     "click",
     function(){
-      scheduleModal.classList.remove("open");
+      if (scheduleEditorOpen) loadSchedules();
+      else scheduleModal.classList.remove("open");
     }
   );
 
@@ -6854,7 +7251,8 @@ var pushLinkCount = 0;
     "click",
     function(event){
       if (event.target === scheduleModal) {
-        scheduleModal.classList.remove("open");
+        if (scheduleEditorOpen) loadSchedules();
+        else scheduleModal.classList.remove("open");
       }
     }
   );
